@@ -176,7 +176,10 @@ def build(item):
     }
 
 
-def fmt_number(v):
+def fmt_number(v, unit=""):
+    # 조 달러 단위는 변화가 작아서 소수 셋째 자리까지 보여준다
+    if unit == "조 달러":
+        return f"{v:,.3f}"
     if abs(v) >= 1000:
         return f"{v:,.0f}"
     if abs(v) >= 100:
@@ -185,15 +188,16 @@ def fmt_number(v):
 
 
 def fmt_line(row):
-    text = f"{row['name']}: {fmt_number(row['value'])}{(' ' + row['unit']) if row['unit'] else ''}"
+    text = f"{row['name']}: {fmt_number(row['value'], row['unit'])}{(' ' + row['unit']) if row['unit'] else ''}"
     if row.get("label"):
         text += f" ({row['label']})"
     if row["change"] is not None:
         sign = "+" if row["change"] >= 0 else ""
+        digits = 3 if row["unit"] == "조 달러" else 2
         if row["change_kind"] == "pct":
             text += f"  [{sign}{row['change']:.2f}%]"
         else:
-            text += f"  [{sign}{row['change']:.2f}]"
+            text += f"  [{sign}{row['change']:.{digits}f}]"
     text += f"  · 기준일 {row['date']} ({row['freq']})"
     return text
 
