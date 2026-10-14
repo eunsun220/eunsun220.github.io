@@ -1,7 +1,14 @@
 name: collect-data
 
+# 손으로 실행 버튼을 눌렀을 때만 돌아갑니다.
+# 매일 아침 7시 자동 실행은 다음 단계에서 추가합니다.
 on:
   workflow_dispatch:
+    inputs:
+      test_only:
+        description: "true 로 하면 숫자는 모으지 않고 텔레그램 테스트 글만 보냅니다"
+        required: false
+        default: "false"
 
 jobs:
   collect:
@@ -18,12 +25,28 @@ jobs:
       - name: 필요한 도구 설치
         run: pip install -r requirements.txt
 
+      - name: 텔레그램 테스트 글만 보내기
+        if: ${{ github.event.inputs.test_only == 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python send_telegram.py --test
+
       - name: 숫자 모으기
+        if: ${{ github.event.inputs.test_only != 'true' }}
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python collect_data.py
 
+      - name: 텔레그램으로 보내기
+        if: ${{ github.event.inputs.test_only != 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python send_telegram.py
+
       - name: 결과 파일 보관
+        if: ${{ github.event.inputs.test_only != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: data
