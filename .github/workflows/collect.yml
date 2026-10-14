@@ -1,0 +1,30 @@
+name: collect-data
+
+on:
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 파일 내려받기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 준비
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 필요한 도구 설치
+        run: pip install -r requirements.txt
+
+      - name: 숫자 모으기
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python collect_data.py
+
+      - name: 결과 파일 보관
+        uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: data.json
