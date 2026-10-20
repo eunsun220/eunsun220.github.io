@@ -1,8 +1,11 @@
 name: collect-data
 
-# 손으로 실행 버튼을 눌렀을 때만 돌아갑니다.
-# 매일 아침 7시 자동 실행은 다음 단계에서 추가합니다.
+# 매일 한국 시간 약 06:45에 자동 실행합니다. (GitHub 시간 UTC 21:45)
+# 무료 서버라 몇 분~수십 분 늦게 시작될 수 있습니다.
+# 손으로 Run workflow 버튼을 눌러서도 실행할 수 있습니다.
 on:
+  schedule:
+    - cron: "45 21 * * *"
   workflow_dispatch:
     inputs:
       test_only:
