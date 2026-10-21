@@ -156,6 +156,11 @@ def today_block(extras):
             if e.get("eps_estimate") is not None:
                 text += f" · 예상 EPS {e['eps_estimate']:.2f}"
             lines.append(text)
+    failed = {f["name"] for f in (extras.get("failures") or [])}
+    if "경제지표 일정" in failed:
+        lines.append("• 경제지표 일정을 가져오지 못했습니다.")
+    if "실적 일정" in failed:
+        lines.append("• 실적 일정을 가져오지 못했습니다.")
     if len(lines) == 1:
         lines.append("• 확인된 주요 일정이 없습니다.")
     return "\n".join(lines)
@@ -210,7 +215,9 @@ def build_blocks(data, extras):
         if b:
             blocks.append(b)
 
-    missing = [f["name"] for f in (data.get("failures") or [])] + [f["name"] for f in ((extras or {}).get("failures") or [])]
+    # 숫자 쪽 오류 글에는 주소(=키)가 섞일 수 있어 이름만, 뉴스·일정 쪽은 오류 종류까지 보여준다
+    missing = [f["name"] for f in (data.get("failures") or [])]
+    missing += [f"{f['name']}({f['error']})" for f in ((extras or {}).get("failures") or [])]
     if missing:
         blocks.append("가져오지 못한 항목: " + esc(", ".join(missing)))
     blocks.append("AI가 정리한 참고용입니다. 투자 판단은 본인이 합니다.")
