@@ -18,6 +18,7 @@ import email.utils
 import json
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
@@ -32,19 +33,61 @@ BROWSER_UA = (
 HEADERS = {"User-Agent": BROWSER_UA}
 
 NEWS_HOURS = 20          # 이 시간 안에 나온 기사만
-PER_FEED = 15            # 목록마다 최대 몇 개까지 후보로 쓸지
-MAX_CANDIDATES = 110     # AI에게 보여줄 최대 기사 수
-MAX_PICK = 14            # 화면에 보여줄 최대 기사 수
+PER_FEED = 10            # 목록마다 최대 몇 개까지 후보로 쓸지
+MAX_CANDIDATES = 160     # AI에게 보여줄 최대 기사 수
+MAX_PICK = 16            # 화면에 보여줄 최대 기사 수
 CATEGORIES = ["월가", "테크", "지정학", "정치", "코인"]
 LEVEL_ORDER = {"high": 0, "mid": 1, "low": 2}
 
 
-def gnews(query):
-    return f"https://news.google.com/rss/search?q={quote(query + ' when:1d')}&hl=ko&gl=KR&ceid=KR:ko"
+def gnews(query, lang="ko"):
+    q = quote(query + " when:1d")
+    if lang == "en":
+        return f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    return f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+
+
+def names_query(names):
+    return " OR ".join(f'"{n}"' for n in names)
+
+
+# ---- 발언을 챙겨볼 사람들 (여기 이름만 고치면 됩니다) ----
+# 월가: 유명 투자자·애널리스트 / 테크: 빅테크·AI 수장 / 정치: 정책 결정자
+PEOPLE_WALLST_KO = ["워런 버핏", "하워드 막스", "폴 튜더 존스", "켄 그리핀", "프레드 윌슨",
+                    "스콧 루브너", "스콧 러브너", "레오폴드 아셴브레너", "댄 아이브스", "드러켄밀러",
+                    "빌 애크먼", "빌 에크먼", "마크 미너비니", "마크 미네르비니", "레이 달리오",
+                    "마이클 버리", "제이미 다이먼", "래리 핑크", "제프리 건들락"]
+PEOPLE_WALLST_EN = ["Warren Buffett", "Howard Marks", "Paul Tudor Jones", "Ken Griffin", "Fred Wilson",
+                    "Scott Rubner", "Leopold Aschenbrenner", "Dan Ives", "Stanley Druckenmiller",
+                    "Bill Ackman", "Mark Minervini", "Ray Dalio", "Michael Burry", "Jamie Dimon",
+                    "Larry Fink", "Jeffrey Gundlach"]
+PEOPLE_TECH_KO = ["일론 머스크", "젠슨 황", "샘 올트먼", "다리오 아모데이", "순다르 피차이", "손정의",
+                  "마크 저커버그", "사티아 나델라", "팀 쿡", "리사 수"]
+PEOPLE_TECH_EN = ["Elon Musk", "Jensen Huang", "Sam Altman", "Dario Amodei", "Sundar Pichai",
+                  "Masayoshi Son", "Mark Zuckerberg", "Satya Nadella", "Tim Cook", "Lisa Su"]
+PEOPLE_POLICY_KO = ["트럼프", "베선트", "러트닉 상무장관", "파월"]
+PEOPLE_POLICY_EN = ["Trump", "Bessent", "Lutnick", "Powell"]
+
+
+def chunks(lst, n):
+    return [lst[i:i + n] for i in range(0, len(lst), n)]
 
 
 # 열리지 않는 주소가 있어도 나머지로 계속 진행한다. 실행 결과를 보고 고쳐 나간다.
-FEEDS = [
+# 이름이 "인물-"로 시작하는 목록은 사람의 발언을 따라가는 목록이다 (AI가 우선해서 고른다).
+PEOPLE_FEEDS = []
+for i, grp in enumerate(chunks(PEOPLE_WALLST_KO, 7), 1):
+    PEOPLE_FEEDS.append((f"인물-월가{i}", gnews(names_query(grp))))
+for i, grp in enumerate(chunks(PEOPLE_WALLST_EN, 6), 1):
+    PEOPLE_FEEDS.append((f"인물-월가(영문){i}", gnews(names_query(grp), "en")))
+for i, grp in enumerate(chunks(PEOPLE_TECH_KO, 5), 1):
+    PEOPLE_FEEDS.append((f"인물-테크{i}", gnews(names_query(grp))))
+for i, grp in enumerate(chunks(PEOPLE_TECH_EN, 5), 1):
+    PEOPLE_FEEDS.append((f"인물-테크(영문){i}", gnews(names_query(grp), "en")))
+PEOPLE_FEEDS.append(("인물-정치", gnews(names_query(PEOPLE_POLICY_KO) + " 발언 중간선거")))
+PEOPLE_FEEDS.append(("인물-정치(영문)", gnews(names_query(PEOPLE_POLICY_EN) + " says midterm", "en")))
+
+FEEDS = PEOPLE_FEEDS + [
     ("연합뉴스 국제", "https://www.yna.co.kr/rss/international.xml"),
     ("연합뉴스 경제", "https://www.yna.co.kr/rss/economy.xml"),
     ("한국경제 국제", "https://www.hankyung.com/feed/international"),
@@ -122,7 +165,7 @@ def parse_feed(name, url, now):
         if not title or not link:
             continue
         source = name
-        if " - " in title and name.startswith("구글뉴스"):
+        if " - " in title and (name.startswith("구글뉴스") or name.startswith("인물-")):
             title, source = title.rsplit(" - ", 1)
         ts = None
         pub = it.findtext("pubDate")
@@ -135,7 +178,8 @@ def parse_feed(name, url, now):
                 ts = None
         if ts and (now - ts) > dt.timedelta(hours=NEWS_HOURS):
             continue
-        out.append({"title": title, "url": link, "source": source.strip(), "ts": ts})
+        out.append({"title": title, "url": link, "source": source.strip(), "ts": ts,
+                    "person": name.startswith("인물-")})
     out.sort(key=lambda x: x["ts"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
     return out[:PER_FEED]
 
@@ -144,6 +188,7 @@ def collect_news(now, failures):
     seen, cands = set(), []
     per_feed = []
     for name, url in FEEDS:
+        time.sleep(0.3)  # 같은 사이트에 한꺼번에 몰리지 않게 살짝 쉰다
         try:
             per_feed.append(parse_feed(name, url, now))
         except Exception as e:  # 한 곳이 막혀도 계속
@@ -199,16 +244,25 @@ def market_text(data_path="data.json"):
 
 
 def build_prompt(cands, mkt):
-    lines = "\n".join(f"{i}|{c['source']}|{c['title']}" for i, c in enumerate(cands, 1))
+    lines = "\n".join(
+        f"{i}|{'[인물] ' if c.get('person') else ''}{c['source']}|{c['title']}" for i, c in enumerate(cands, 1)
+    )
     return f"""너는 미국 주식과 비트코인·암호화폐에 투자하는 사람을 위한 아침 뉴스 편집자다.
-아래는 밤사이 모은 뉴스 제목 목록이다. 각 줄 형식은 "번호|출처|제목"이다.
+아래는 밤사이 모은 뉴스 제목 목록이다. 각 줄 형식은 "번호|출처|제목"이다. 출처 앞의 [인물]은 유명 인물의 발언·행보를 따라가는 검색에서 나온 기사라는 뜻이다. 영어 제목도 있다.
 
 규칙
 1. 미국 증시나 비트코인·암호화폐 시장에 영향을 줄 만한 기사만 최대 {MAX_PICK}개 고른다.
    연예, 스포츠, 사건사고, 국내 정치 가십 등 관련 없는 기사는 버린다.
 2. 같은 사건을 다룬 기사는 하나만 고른다.
-3. category는 "월가", "테크", "지정학", "정치", "코인" 중 하나다.
-4. title은 원래 제목의 뜻을 그대로 두고 40자 이내로 줄인다. 제목에 없는 사실, 숫자, 원인을 절대 덧붙이지 않는다.
+3. category는 "월가", "테크", "지정학", "정치", "코인" 중 하나다. 기준은 아래와 같다.
+   - 월가: 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너(시타델), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너 같은 유명 투자자·애널리스트·금융사 수장의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
+   - 테크: 머스크, 젠슨 황, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의 같은 빅테크·AI 수장의 발언, 빅테크 실적과 주요 소식.
+   - 정치: 트럼프의 발언, 상무장관·재무장관 등 정책 당국자 발언, 중간선거와 관세 등 정책 소식.
+   - 지정학: 전쟁, 외교, 제재 등 국제 정세.
+   - 코인: 비트코인·이더리움·ETF·규제 소식.
+   각 분야 최대 4개까지만 고르고, 사람의 발언·행보를 다룬 기사([인물] 포함)를 시황 기사보다 우선한다.
+4. title은 원래 제목의 뜻을 그대로 두고 40자 이내 한국어로 줄인다(영어는 번역한다). 사람의 발언이면 '인물 "핵심 발언"' 형식으로 쓴다.
+   제목에 없는 사실, 숫자, 원인, 발언을 절대 덧붙이지 않는다.
 5. level은 "high"(시장 방향을 바꿀 수 있어 꼭 확인, 최대 3개), "mid"(참고), "low"(단기 소음일 가능성) 중 하나다.
 6. summary는 고른 기사와 아래 시장 숫자만 근거로 밤사이 분위기를 한국어 2문장 이내로 쓴다.
    원인을 단정하지 말고, 근거가 부족하면 "원인은 불명확"이라고 쓴다. 투자를 권유하는 표현은 쓰지 않는다.
