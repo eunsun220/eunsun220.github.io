@@ -119,6 +119,21 @@ def stablecoin_supply():
     }
 
 
+def yield_10y():
+    """10년물 금리: 야후(거의 실시간)를 먼저 쓰고, 안 되면 FRED(하루 이상 늦음)를 쓴다."""
+    try:
+        raw = yahoo("^TNX")
+        if raw["value"] > 20:  # 예전 방식(금리x10)으로 오면 보정
+            raw["value"] /= 10
+            if raw.get("prev") is not None:
+                raw["prev"] /= 10
+        if not (0 < raw["value"] < 20):
+            raise RuntimeError("값이 이상함")
+        return raw
+    except Exception:
+        return fred("DGS10")
+
+
 # ---------------------------------------------------------------- 항목 정의
 # kind: price(퍼센트 변화), level(차이값 변화)
 # scale: 원래 값을 나누는 수 (표시 단위로 바꾸기 위해)
@@ -134,7 +149,7 @@ def metrics():
         {"group": "시장", "name": "원/달러 환율", "fn": lambda: yahoo("KRW=X"), "kind": "price", "unit": "원", "scale": 1, "freq": "일간"},
         {"group": "시장", "name": "비트코인", "fn": lambda: yahoo("BTC-USD"), "kind": "price", "unit": "달러", "scale": 1, "freq": "일간"},
         # 금리
-        {"group": "금리", "name": "미국 10년물 금리", "fn": lambda: fred("DGS10"), "kind": "level", "unit": "%", "scale": 1, "freq": "일간(하루 늦음)"},
+        {"group": "금리", "name": "미국 10년물 금리", "fn": yield_10y, "kind": "level", "unit": "%", "scale": 1, "freq": "일간"},
         {"group": "금리", "name": "장단기금리차(10년-2년)", "fn": lambda: fred("T10Y2Y"), "kind": "level", "unit": "%p", "scale": 1, "freq": "일간(하루 늦음)"},
         # 유동성 (대부분 주 1회 발표)
         {"group": "유동성", "name": "연준 대차대조표", "fn": lambda: fred("WALCL"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간"},
