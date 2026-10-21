@@ -140,8 +140,14 @@ WEEKDAYS = "월화수목금토일"
 
 # ---------------------------------------------------------------- 공통
 
+class SafeError(Exception):
+    """키나 주소가 들어 있지 않아 그대로 보여줘도 되는 오류"""
+
+
 def err_text(e):
     """오류 글에 주소(=키)가 섞일 수 있어 종류와 상태 번호만 남긴다."""
+    if isinstance(e, SafeError):
+        return str(e)
     code = getattr(getattr(e, "response", None), "status_code", None)
     return type(e).__name__ + (f" (HTTP {code})" if code else "")
 
@@ -202,11 +208,10 @@ def collect_news(now, failures):
     return cands[:MAX_CANDIDATES]
 
 
-def gemini_json(prompt):
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY 없음")
-    model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+def gemini_call(key, model, prompt):
     r = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         headers={"x-goog-api-key": key, "Content-Type": "application/json"},
@@ -218,11 +223,65 @@ def gemini_json(prompt):
     )
     r.raise_for_status()
     parts = r.json()["candidates"][0]["content"]["parts"]
-    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
-    text = text.strip()
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?|```$", "", text).strip()
     return json.loads(text)
+
+
+def list_flash_models(key):
+    """내 키로 쓸 수 있는 flash 계열 모델 이름을 구글에 물어본다 (모델 이름이 바뀌어도 따라가기 위해)."""
+    r = requests.get(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": key}, params={"pageSize": 100}, timeout=20,
+    )
+    r.raise_for_status()
+    skip = ("image", "tts", "live", "audio", "embed", "robotics", "computer", "thinking", "exp", "preview-")
+    names = set()
+    for m in r.json().get("models", []):
+        n = m.get("name", "").replace("models/", "")
+        if "flash" in n and "generateContent" in m.get("supportedGenerationMethods", []) and not any(x in n for x in skip):
+            names.add(n)
+    return sorted(names, reverse=True)
+
+
+def gemini_json(prompt):
+    """일시적인 오류(503 등)는 쉬었다가 다시 시도하고, 그래도 안 되면 다른 모델로 바꿔 시도한다."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise SafeError("GEMINI_API_KEY 없음")
+    main_model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+    tried, codes = [], []
+
+    def run(model, tries):
+        tried.append(model)
+        for attempt in range(1, tries + 1):
+            try:
+                return gemini_call(key, model, prompt)
+            except requests.HTTPError as e:
+                code = getattr(e.response, "status_code", None)
+                codes.append(str(code))
+                if code not in RETRY_STATUS:
+                    return None  # 키 오류 등은 다시 해도 소용없으니 다음 모델로
+            except (requests.ConnectionError, requests.Timeout, ValueError, KeyError, IndexError) as e:
+                codes.append(type(e).__name__)
+            if attempt < tries:
+                time.sleep(5 * attempt)
+        return None
+
+    for model, tries in ((main_model, 3), ("gemini-flash-lite-latest", 2)):
+        result = run(model, tries)
+        if result is not None:
+            return result
+    try:
+        extra = [m for m in list_flash_models(key) if m not in tried][:2]
+    except Exception:
+        extra = []
+    for model in extra:
+        result = run(model, 2)
+        if result is not None:
+            return result
+    raise SafeError(f"AI 서버 응답 실패(모델 {len(tried)}개, 시도 {len(codes)}회: {','.join(sorted(set(codes)))})")
 
 
 def market_text(data_path="data.json"):
