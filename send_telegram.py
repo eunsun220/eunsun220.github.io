@@ -86,14 +86,19 @@ def fear_greed_lines(rows, extras):
             f"• 주식 공포탐욕(CNN) {fg['score']:.0f} {esc(rating)} "
             f"(전일 {fg['prev_close']:.0f} · 1주 전 {fg['week']:.0f} · 1달 전 {fg['month']:.0f})"
         )
-    for r in rows:
-        if "공포탐욕" in r["name"]:
-            text = f"• {esc(r['name'])} {r['value']:.0f}"
-            if r.get("label"):
-                text += f" ({esc(r['label'])})"
-            if r["change"] is not None:
-                text += f" ({'+' if r['change'] >= 0 else ''}{r['change']:.0f})"
-            out.append(text)
+    cmc = (extras or {}).get("coin_fg_cmc")
+    if cmc:
+        label = RATING_KO.get(str(cmc.get("label", "")).lower(), cmc.get("label", ""))
+        out.append(f"• 코인 공포탐욕(코인마켓캡) {cmc['value']:.0f} {esc(label)}".rstrip())
+    else:
+        for r in rows:
+            if "공포탐욕" in r["name"]:
+                text = f"• 코인 공포탐욕(alternative.me) {r['value']:.0f}"
+                if r.get("label"):
+                    text += f" ({esc(r['label'])})"
+                if r["change"] is not None:
+                    text += f" ({'+' if r['change'] >= 0 else ''}{r['change']:.0f})"
+                out.append(text)
     return out
 
 
@@ -121,41 +126,60 @@ def news_blocks(extras):
     return blocks
 
 
-def event_line(e):
-    text = f"• {e['time']} {esc(e['title'])}"
-    extra = []
-    if e.get("forecast"):
-        extra.append(f"예상 {esc(e['forecast'])}")
-    if e.get("previous"):
-        extra.append(f"이전 {esc(e['previous'])}")
-    if extra:
-        text += " · " + " / ".join(extra)
-    if e.get("impact") == "High":
+KIND_MARK = {"지표": "📊", "정책": "🏛", "발언": "🎤", "실적": "💼", "이벤트": "📌"}
+MAX_EARN_WEEK = 24  # 이번 주 칸에 보여줄 실적 발표 최대 개수 (너무 길어지지 않게)
+
+
+def ymd_label(ymd):
+    d = dt.datetime.strptime(ymd, "%Y-%m-%d")
+    return f"{d:%m/%d}({WEEKDAYS[d.weekday()]})"
+
+
+def event_text(e, star=True):
+    kind = e.get("kind", "지표")
+    text = f"{KIND_MARK.get(kind, '📌')} {esc(e['title'])}"
+    if e.get("time"):
+        text = f"{e['time']} " + text
+    if kind == "지표":
+        extra = []
+        if e.get("forecast"):
+            extra.append(f"예상 {esc(e['forecast'])}")
+        if e.get("previous"):
+            extra.append(f"이전 {esc(e['previous'])}")
+        if extra:
+            text += " · " + " / ".join(extra)
+    if star and e.get("impact") == "High":
         text += " ⭐"
     return text
+
+
+def earn_text(e):
+    text = f"{KIND_MARK['실적']} {esc(e['name'])} 실적 · {esc(e['when'])}"
+    if e.get("eps_estimate") is not None:
+        text += f" · 예상 EPS {e['eps_estimate']:.2f}"
+    return text
+
+
+def group_lines(items):
+    """[(ymd, 정렬용 시간, 글)] -> 날짜별로 묶은 줄 목록"""
+    lines, cur = [], None
+    for ymd, _, text in sorted(items, key=lambda x: (x[0], x[1] or "~")):
+        if ymd != cur:
+            cur = ymd
+            lines.append(ymd_label(ymd))
+        lines.append("• " + text)
+    return lines
 
 
 def today_block(extras):
     if not extras:
         return None
-    lines = ["<b>[오늘 주요 일정]</b> 한국시간, 앞으로 24시간"]
-    events = extras.get("today_events") or []
-    if events:
-        lines.append("<b>경제지표·연준</b> (⭐=중요도 높음)")
-        cur = None
-        for e in events:
-            if e["date"] != cur:
-                cur = e["date"]
-                lines.append(esc(cur))
-            lines.append(event_line(e))
-    earn = extras.get("earnings") or []
-    if earn:
-        lines.append(f"\n<b>실적 발표</b> (미국 날짜 {esc(extras.get('earnings_day', ''))})")
-        for e in earn:
-            text = f"• {esc(e['name'])} · {esc(e['when'])}"
-            if e.get("eps_estimate") is not None:
-                text += f" · 예상 EPS {e['eps_estimate']:.2f}"
-            lines.append(text)
+    today = extras.get("today_ymd", "")
+    items = [(e["ymd"], e["time"], event_text(e)) for e in extras.get("today_events") or []]
+    items += [(m["ymd"], "", event_text(m)) for m in extras.get("manual_events") or [] if m["ymd"] == today]
+    items += [(e["ymd"], "", earn_text(e)) for e in extras.get("earnings") or [] if e["ymd"] == today]
+    lines = ["<b>[오늘 주요 일정]</b> 한국시간 기준 앞으로 24시간 (⭐=중요도 높음, 실적은 미국 날짜)"]
+    lines += group_lines(items)
     failed = {f["name"] for f in (extras.get("failures") or [])}
     if "경제지표 일정" in failed:
         lines.append("• 경제지표 일정을 가져오지 못했습니다.")
@@ -169,16 +193,17 @@ def today_block(extras):
 def week_block(extras):
     if not extras:
         return None
-    events = extras.get("week_events") or []
-    if not events:
-        return None
-    lines = ["<b>[이번 주 체크]</b> 중요도 높은 지표만, 한국시간"]
-    cur = None
-    for e in events:
-        if e["date"] != cur:
-            cur = e["date"]
-            lines.append(esc(cur))
-        lines.append(event_line(e).replace(" ⭐", ""))
+    today = extras.get("today_ymd", "")
+    items = [(e["ymd"], e["time"], event_text(e, star=False)) for e in extras.get("week_events") or []]
+    items += [(m["ymd"], "", event_text(m)) for m in extras.get("manual_events") or [] if m["ymd"] > today]
+    earn = [e for e in extras.get("earnings") or [] if e["ymd"] > today]
+    items += [(e["ymd"], "", earn_text(e)) for e in earn[:MAX_EARN_WEEK]]
+    lines = ["<b>[이번 주·다음 주 체크]</b> 향후 10일, 중요 일정만 (지표·정책·발언은 한국시간, 실적은 미국 날짜)"]
+    lines += group_lines(items)
+    if len(earn) > MAX_EARN_WEEK:
+        lines.append(f"※ 실적 발표는 날짜순 {MAX_EARN_WEEK}개까지만 표시")
+    if len(lines) == 1:
+        lines.append("• 확인된 일정이 없습니다.")
     return "\n".join(lines)
 
 

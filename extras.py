@@ -90,8 +90,6 @@ PEOPLE_FEEDS.append(("인물-정치(영문)", gnews(names_query(PEOPLE_POLICY_EN
 FEEDS = PEOPLE_FEEDS + [
     ("연합뉴스 국제", "https://www.yna.co.kr/rss/international.xml"),
     ("연합뉴스 경제", "https://www.yna.co.kr/rss/economy.xml"),
-    ("한국경제 국제", "https://www.hankyung.com/feed/international"),
-    ("한국경제 증권", "https://www.hankyung.com/feed/finance"),
     ("매일경제 증권", "https://www.mk.co.kr/rss/50200011/"),
     ("구글뉴스 미국증시", gnews("미국 증시 뉴욕증시 마감")),
     ("구글뉴스 연준·금리", gnews("연준 금리 美 국채금리")),
@@ -343,41 +341,88 @@ def title_ko(title):
     return title
 
 
+def kind_of(title):
+    t = title.lower()
+    if any(k in t for k in ("speaks", "testifies", "press conference")):
+        return "발언"
+    if any(k in t for k in ("federal funds rate", "fomc statement", "fomc meeting minutes", "interest rate")):
+        return "정책"
+    return "지표"
+
+
+ECON_URLS = [
+    ("https://nfs.faireconomy.media/ff_calendar_thisweek.json", True),
+    ("https://nfs.faireconomy.media/ff_calendar_nextweek.json", False),  # 아직 안 올라왔으면 건너뜀
+]
+
+
 def econ_events(now):
-    r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
     today, week = [], []
-    for e in r.json():
-        if e.get("country") != "USD" or e.get("impact") not in ("High", "Medium"):
-            continue
+    for url, required in ECON_URLS:
         try:
-            when = dt.datetime.fromisoformat(e["date"]).astimezone(KST)
-        except (KeyError, ValueError):
+            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            rows = r.json()
+        except Exception:
+            if required:
+                raise
             continue
-        row = {
-            "date": f"{when:%m/%d}({WEEKDAYS[when.weekday()]})",
-            "time": f"{when:%H:%M}",
-            "title": title_ko(e.get("title", "")),
-            "impact": e.get("impact"),
-            "forecast": e.get("forecast") or "",
-            "previous": e.get("previous") or "",
-        }
-        if now <= when < now + dt.timedelta(hours=24):
-            today.append((when, row))
-        elif now + dt.timedelta(hours=24) <= when <= now + dt.timedelta(days=7) and e.get("impact") == "High":
-            week.append((when, row))
+        for e in rows:
+            if e.get("country") != "USD" or e.get("impact") not in ("High", "Medium"):
+                continue
+            try:
+                when = dt.datetime.fromisoformat(e["date"]).astimezone(KST)
+            except (KeyError, ValueError):
+                continue
+            row = {
+                "ymd": f"{when:%Y-%m-%d}",
+                "date": f"{when:%m/%d}({WEEKDAYS[when.weekday()]})",
+                "time": f"{when:%H:%M}",
+                "title": title_ko(e.get("title", "")),
+                "kind": kind_of(e.get("title", "")),
+                "impact": e.get("impact"),
+                "forecast": e.get("forecast") or "",
+                "previous": e.get("previous") or "",
+            }
+            if now <= when < now + dt.timedelta(hours=24):
+                today.append((when, row))
+            elif now + dt.timedelta(hours=24) <= when <= now + dt.timedelta(days=10) and e.get("impact") == "High":
+                week.append((when, row))
     today.sort(key=lambda x: x[0])
     week.sort(key=lambda x: x[0])
     return [r for _, r in today], [r for _, r in week]
 
 
-def earnings_today(day):
+def manual_events(now, econ_titles):
+    """events.json 에 직접 적어 둔 일정(중간선거, 국채 발행계획 등). 파일이 없으면 건너뜀."""
+    try:
+        with open("events.json", encoding="utf-8") as fp:
+            data = json.load(fp)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for m in data:
+        try:
+            d = dt.datetime.strptime(m["date"], "%Y-%m-%d")
+        except (KeyError, ValueError, TypeError):
+            continue
+        title = str(m.get("title", "")).strip()
+        if not title or not (now.date() <= d.date() <= (now + dt.timedelta(days=14)).date()):
+            continue
+        if "FOMC" in title and any("FOMC" in t for t in econ_titles):
+            continue  # 경제 캘린더에 이미 있으면 중복 방지
+        out.append({"ymd": m["date"], "time": "", "title": title, "kind": m.get("kind") or "이벤트"})
+    out.sort(key=lambda x: x["ymd"])
+    return out
+
+
+def earnings_range(start, end):
     key = os.environ.get("FINNHUB_API_KEY", "").strip()
     if not key:
         raise RuntimeError("FINNHUB_API_KEY 없음")
     r = requests.get(
         "https://finnhub.io/api/v1/calendar/earnings",
-        params={"from": day, "to": day, "token": key},
+        params={"from": start, "to": end, "token": key},
         timeout=TIMEOUT,
     )
     r.raise_for_status()
@@ -385,18 +430,36 @@ def earnings_today(day):
     for e in r.json().get("earningsCalendar", []) or []:
         sym = e.get("symbol")
         name = WATCH.get(sym)
-        if not name or name in seen:
+        day = e.get("date")
+        if not name or not day or (name, day) in seen:
             continue
-        seen.add(name)
+        seen.add((name, day))
         hour = e.get("hour") or ""
         eps = e.get("epsEstimate")
         out.append({
-            "symbol": sym, "name": name, "hour": hour,
+            "symbol": sym, "name": name, "ymd": day, "hour": hour,
             "when": HOUR_LABEL.get(hour, "시간 미정"),
             "eps_estimate": eps if isinstance(eps, (int, float)) else None,
         })
-    out.sort(key=lambda x: (HOUR_ORDER.get(x["hour"], 3), x["name"]))
+    out.sort(key=lambda x: (x["ymd"], HOUR_ORDER.get(x["hour"], 3), x["name"]))
     return out
+
+
+def cmc_fear_greed():
+    """코인마켓캡 공포탐욕지수 (CMC_API_KEY 가 있을 때만). 없으면 None."""
+    key = os.environ.get("CMC_API_KEY", "").strip()
+    if not key:
+        return None
+    r = requests.get(
+        "https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest",
+        headers={"X-CMC_PRO_API_KEY": key, "Accept": "application/json"},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    d = r.json()["data"]
+    if isinstance(d, list):
+        d = d[0]
+    return {"value": float(d["value"]), "label": d.get("value_classification", "")}
 
 
 # ---------------------------------------------------------------- 실행
@@ -405,7 +468,8 @@ def main():
     now = dt.datetime.now(KST)
     failures = []
     out = {"generated_at": now.isoformat(), "stock_fg": None, "news": None,
-           "today_events": [], "week_events": [], "earnings": [], "earnings_day": f"{now:%m/%d}"}
+           "today_events": [], "week_events": [], "manual_events": [], "earnings": [],
+           "today_ymd": f"{now:%Y-%m-%d}", "coin_fg_cmc": None}
 
     try:
         out["stock_fg"] = stock_fear_greed()
@@ -427,10 +491,18 @@ def main():
     except Exception as e:
         failures.append({"name": "경제지표 일정", "error": err_text(e)})
 
+    titles = [e["title"] for e in out["today_events"] + out["week_events"]]
+    out["manual_events"] = manual_events(now, titles)
+
     try:
-        out["earnings"] = earnings_today(f"{now:%Y-%m-%d}")
+        out["earnings"] = earnings_range(f"{now:%Y-%m-%d}", f"{now + dt.timedelta(days=10):%Y-%m-%d}")
     except Exception as e:
         failures.append({"name": "실적 일정", "error": err_text(e)})
+
+    try:
+        out["coin_fg_cmc"] = cmc_fear_greed()
+    except Exception as e:
+        failures.append({"name": "코인 공포탐욕(CMC)", "error": err_text(e)})
 
     out["failures"] = failures
     with open("extras.json", "w", encoding="utf-8") as fp:
