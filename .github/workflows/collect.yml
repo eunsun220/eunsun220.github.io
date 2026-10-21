@@ -46,6 +46,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
         run: python extras.py
 
       - name: 텔레그램으로 보내기
