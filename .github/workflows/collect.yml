@@ -1,7 +1,7 @@
 name: collect-data
 
-# 매일 한국 시간 약 06:45에 자동 실행합니다. (GitHub 시간 UTC 21:45)
-# 무료 서버라 몇 분~수십 분 늦게 시작될 수 있습니다.
+# 매일 한국 시간 약 06:00에 자동 실행합니다. (GitHub 시간 UTC 21:00)
+# 무료 서버라 몇십 분~2시간 정도 늦게 시작될 수 있습니다.
 # 손으로 Run workflow 버튼을 눌러서도 실행할 수 있습니다.
 on:
   schedule:
@@ -12,6 +12,10 @@ on:
         description: "true 로 하면 숫자는 모으지 않고 텔레그램 테스트 글만 보냅니다"
         required: false
         default: "false"
+      force_sections:
+        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, cover, monthend, monthly). 비워 두면 평소대로"
+        required: false
+        default: ""
 
 jobs:
   collect:
@@ -47,7 +51,16 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
+          FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python extras.py
+
+      - name: 일요일 주간 특징주 모으기
+        if: ${{ github.event.inputs.test_only != 'true' }}
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
+        run: python weekly.py
 
       - name: 텔레그램으로 보내기
         if: ${{ github.event.inputs.test_only != 'true' }}
@@ -64,3 +77,5 @@ jobs:
           path: |
             data.json
             extras.json
+            weekly.json
+          if-no-files-found: ignore
