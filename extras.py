@@ -143,8 +143,12 @@ def all_feeds(now):
 
 
 # 안전 신호: 대사관·자국민·여행경보 + 철수·감축·대피 같은 말이 함께 나온 제목
-ALERT_WHO = re.compile(r"대사관|영사관|자국민|교민|embassy|consulate|nationals|여행경보|여행 경보|travel advisory|여행금지", re.I)
-ALERT_WHAT = re.compile(r"철수|감축|대피|철군|출국|퇴거|이동|권고|폐쇄|상향|evacuat|ordered departure|depart|reduc|withdraw|draw ?down|leave|suspend|clos|urge|raise|level 4", re.I)
+ALERT_WHO = re.compile(
+    r"대사관|영사관|자국민|교민|미국인|미 국민|외교관|외교 인력|embassy|consulate|nationals|Americans|diplomats|"
+    r"여행경보|여행 경보|travel advisory|여행금지", re.I)
+ALERT_WHAT = re.compile(
+    r"철수|감축|대피|철군|출국|퇴거|이동 명령|이동시|권고|폐쇄|상향|evacuat|ordered departure|depart|reduc|withdraw|"
+    r"draw ?down|leave|suspend|clos|urge|raise|level 4|non-emergency|pull out", re.I)
 
 
 def is_alert(title):
@@ -698,7 +702,8 @@ def economist_cover(now):
     try:
         url = gnews('"The Economist" cover OR "this week\'s cover" OR "weekly edition"', "en", days=3)
         found = [it for it in parse_feed("표지-이코노미스트", url, now, 72)
-                 if re.search(r"economist|이코노미스트", it["title"] + " " + it["source"], re.I)]
+                 if re.search(r"economist|이코노미스트", it["title"] + " " + it["source"], re.I)
+                 and re.search(r"cover|표지", it["title"], re.I)]
         for it in found[:3]:
             out["links"].append({"title": it["title"][:80], "url": it["url"], "source": it["source"]})
     except Exception as e:
