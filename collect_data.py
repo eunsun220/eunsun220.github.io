@@ -54,6 +54,65 @@ def fred(series_id):
     }
 
 
+def fred_history(series_id, limit=60):
+    """FRED에서 최근 기록을 오래된 순서로 가져온다. [(날짜, 값), ...]"""
+    key = os.environ.get("FRED_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("FRED_API_KEY가 설정되지 않음")
+    r = requests.get(
+        "https://api.stlouisfed.org/fred/series/observations",
+        params={"series_id": series_id, "api_key": key, "file_type": "json", "sort_order": "desc", "limit": limit},
+        headers=HEADERS,
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    obs = [(o["date"], float(o["value"])) for o in r.json().get("observations", []) if o.get("value") not in (".", "", None)]
+    obs.reverse()
+    return obs
+
+
+NFCI_WINDOW = 13   # 주. 13주(약 한 분기)를 한 구간으로 보고 직전 13주와 비교한다
+NFCI_TOLERANCE = 0.01  # 이 정도 차이는 "비슷"으로 본다
+
+
+def _cmp(new, old, up, down):
+    if abs(new - old) < NFCI_TOLERANCE:
+        return "비슷"
+    return up if new > old else down
+
+
+def nfci_trend(hist=None):
+    """최근 3개월의 저점·고점을 직전 3개월과 비교하고, 1년 범위 안의 위치를 알려준다. (숫자가 클수록 불안)"""
+    hist = hist if hist is not None else fred_history("NFCI", 56)
+    vals = [v for _, v in hist]
+    if len(vals) < NFCI_WINDOW * 2:
+        raise RuntimeError("기록이 부족함")
+    recent, prior = vals[-NFCI_WINDOW:], vals[-NFCI_WINDOW * 2:-NFCI_WINDOW]
+    low_r, low_p, high_r, high_p = min(recent), min(prior), max(recent), max(prior)
+    low_dir = _cmp(low_r, low_p, "상승", "하락")
+    high_dir = _cmp(high_r, high_p, "상승", "하락")
+    arrow = {"상승": "⬆", "하락": "⬇", "비슷": "➖"}
+    if low_dir == "상승" and high_dir == "상승":
+        verdict = "둘 다 올라옴 → 점점 불안(긴축) 쪽"
+    elif low_dir == "하락" and high_dir == "하락":
+        verdict = "둘 다 내려옴 → 점점 안정(완화) 쪽"
+    elif low_dir == "비슷" and high_dir == "비슷":
+        verdict = "큰 변화 없음"
+    else:
+        verdict = "엇갈림 → 방향이 아직 뚜렷하지 않음"
+    lines = [
+        f"최근 3개월 저점 {low_r:.2f} {arrow[low_dir]} (직전 3개월 {low_p:.2f})",
+        f"최근 3개월 고점 {high_r:.2f} {arrow[high_dir]} (직전 3개월 {high_p:.2f})",
+        f"해석: {verdict}",
+    ]
+    if len(vals) >= 52:
+        year = vals[-52:]
+        lo, hi, cur = min(year), max(year), vals[-1]
+        pos = (cur - lo) / (hi - lo) * 100 if hi > lo else 50
+        lines.append(f"1년 범위 {lo:.2f}(가장 안정) ~ {hi:.2f}(가장 불안), 지금은 {pos:.0f}% 지점")
+    return "\n".join(lines)
+
+
 def yahoo(symbol):
     """Yahoo Finance(비공식)에서 일봉 종가를 가져온다."""
     r = requests.get(
@@ -157,6 +216,7 @@ def metrics():
         {"group": "유동성", "name": "재무부 일반계정(TGA, 주평균)", "fn": lambda: fred("WTREGEN"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간"},
         {"group": "유동성", "name": "은행 대출 및 리스", "fn": lambda: fred("TOTLL"), "kind": "level", "unit": "조 달러", "scale": 1e3, "freq": "주간"},
         {"group": "유동성", "name": "은행 신용 총액", "fn": lambda: fred("TOTBKCR"), "kind": "level", "unit": "조 달러", "scale": 1e3, "freq": "주간"},
+        {"group": "유동성", "name": "금융상황지수 NFCI(클수록 불안)", "fn": lambda: fred("NFCI"), "kind": "level", "unit": "", "scale": 1, "freq": "주간", "digits": 3, "post": nfci_trend},
         # 코인
         {"group": "코인", "name": "코인 공포탐욕지수(0~100)", "fn": crypto_fear_greed, "kind": "level", "unit": "", "scale": 1, "freq": "일간"},
         {"group": "코인", "name": "스테이블코인 총 발행량(7일 전 대비)", "fn": stablecoin_supply, "kind": "price", "unit": "억 달러", "scale": 1e8, "freq": "일간"},
@@ -176,7 +236,7 @@ def build(item):
             change = (raw["value"] / raw["prev"] - 1) * 100 if raw["prev"] else None
         else:
             change = value - prev
-    return {
+    row = {
         "group": item["group"],
         "name": item["name"],
         "value": value,
@@ -188,11 +248,20 @@ def build(item):
         "prev_date": raw.get("prev_date"),
         "freq": item["freq"],
         "label": raw.get("label"),
+        "digits": item.get("digits"),
     }
+    if item.get("post"):
+        try:
+            row["note"] = item["post"]()
+        except Exception:  # 설명줄이 실패해도 숫자는 그대로 보낸다
+            row["note"] = None
+    return row
 
 
-def fmt_number(v, unit=""):
+def fmt_number(v, unit="", digits=None):
     # 조 달러 단위는 변화가 작아서 소수 셋째 자리까지 보여준다
+    if digits is not None:
+        return f"{v:,.{digits}f}"
     if unit == "조 달러":
         return f"{v:,.3f}"
     if abs(v) >= 1000:
@@ -203,12 +272,12 @@ def fmt_number(v, unit=""):
 
 
 def fmt_line(row):
-    text = f"{row['name']}: {fmt_number(row['value'], row['unit'])}{(' ' + row['unit']) if row['unit'] else ''}"
+    text = f"{row['name']}: {fmt_number(row['value'], row['unit'], row.get('digits'))}{(' ' + row['unit']) if row['unit'] else ''}"
     if row.get("label"):
         text += f" ({row['label']})"
     if row["change"] is not None:
         sign = "+" if row["change"] >= 0 else ""
-        digits = 3 if row["unit"] == "조 달러" else 2
+        digits = row.get("digits") or (3 if row["unit"] == "조 달러" else 2)
         if row["change_kind"] == "pct":
             text += f"  [{sign}{row['change']:.2f}%]"
         else:
@@ -234,6 +303,9 @@ def main():
             current = row["group"]
             print(f"\n[{current}]")
         print("  " + fmt_line(row))
+        if row.get("note"):
+            for ln in row["note"].split("\n"):
+                print("      ↳ " + ln)
     if failures:
         print("\n[가져오지 못한 항목]")
         for f in failures:

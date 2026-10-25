@@ -35,7 +35,9 @@ def esc(s):
     return html.escape(str(s), quote=False)
 
 
-def fmt_number(v, unit=""):
+def fmt_number(v, unit="", digits=None):
+    if digits is not None:
+        return f"{v:,.{digits}f}"
     if unit == "조 달러":
         return f"{v:,.3f}"
     if abs(v) >= 1000:
@@ -60,7 +62,7 @@ def is_old(row, now):
 
 def line(row, now):
     unit = row["unit"]
-    text = f"• {row['name']} {fmt_number(row['value'], unit)}"
+    text = f"• {row['name']} {fmt_number(row['value'], unit, row.get('digits'))}"
     if unit:
         text += unit if unit in ("%", "%p") else f" {unit}"
     if row.get("label"):
@@ -70,11 +72,14 @@ def line(row, now):
         if row["change_kind"] == "pct":
             text += f" ({sign}{row['change']:.2f}%)"
         else:
-            digits = 3 if unit == "조 달러" else 2
+            digits = row.get("digits") or (3 if unit == "조 달러" else 2)
             text += f" ({sign}{row['change']:.{digits}f})"
     if row["freq"] != "일간" or is_old(row, now):
         text += f" · {short_date(row['date'])} 기준"
-    return esc(text)
+    out = esc(text)
+    if row.get("note"):
+        out += "".join("\n   ↳ " + esc(ln) for ln in row["note"].split("\n"))
+    return out
 
 
 def fear_greed_lines(rows, extras):
