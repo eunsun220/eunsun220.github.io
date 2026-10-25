@@ -9,6 +9,11 @@
   4) 미국 경제지표 일정(오늘·이번 주)과 주요 기업 실적 일정을 가져온다
   5) extras.json 으로 저장한다. 일부가 실패해도 멈추지 않는다
 
+이번 판에서 늘어난 것
+  - 대사관 인력 철수·자국민 대피·여행경보 같은 "안전 신호"는 AI가 빼먹지 못하게 코드가 따로 잡아서 맨 위에 보여준다
+  - 대형주 이슈 / AI 자금조달·보안 이슈 / 금 / 정기 보고서(다보스·NDAA·ARK) 뉴스
+  - 금요일: 이코노미스트 표지  /  월말: 다음 달 주요 일정  /  매달 1일: 다시 보는 메모(reminders.json)
+
 필요한 것 (GitHub 금고에 저장, 이 파일에 직접 쓰지 않는다)
   - GEMINI_API_KEY  : 뉴스 선별용 (없으면 AI 없이 제목만 모아 보여준다)
   - FINNHUB_API_KEY : 실적 일정용 (없으면 실적 줄만 빠진다)
@@ -34,14 +39,16 @@ HEADERS = {"User-Agent": BROWSER_UA}
 
 NEWS_HOURS = 20          # 이 시간 안에 나온 기사만
 PER_FEED = 10            # 목록마다 최대 몇 개까지 후보로 쓸지
-MAX_CANDIDATES = 160     # AI에게 보여줄 최대 기사 수
-MAX_PICK = 16            # 화면에 보여줄 최대 기사 수
-CATEGORIES = ["월가", "테크", "지정학", "정치", "코인"]
+MAX_CANDIDATES = 220     # AI에게 보여줄 최대 기사 수
+MAX_PICK = 24            # 화면에 보여줄 최대 기사 수
+MAX_ALERTS = 5           # 안전 신호(대사관 철수 등)는 최대 이만큼 무조건 보여준다
+CATEGORIES = ["월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서"]
+GNEWS_PREFIXES = ("구글뉴스", "인물-", "대형주-", "금-", "이슈-", "경보-", "보고서-", "표지-")
 LEVEL_ORDER = {"high": 0, "mid": 1, "low": 2}
 
 
-def gnews(query, lang="ko"):
-    q = quote(query + " when:1d")
+def gnews(query, lang="ko", days=1):
+    q = quote(query + f" when:{days}d")
     if lang == "en":
         return f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
     return f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
@@ -56,15 +63,15 @@ def names_query(names):
 PEOPLE_WALLST_KO = ["워런 버핏", "하워드 막스", "폴 튜더 존스", "켄 그리핀", "프레드 윌슨",
                     "스콧 루브너", "스콧 러브너", "레오폴드 아셴브레너", "댄 아이브스", "드러켄밀러",
                     "빌 애크먼", "빌 에크먼", "마크 미너비니", "마크 미네르비니", "레이 달리오",
-                    "마이클 버리", "제이미 다이먼", "래리 핑크", "제프리 건들락"]
+                    "마이클 버리", "제이미 다이먼", "래리 핑크", "제프리 건들락", "톰 리", "모건스탠리 전망"]
 PEOPLE_WALLST_EN = ["Warren Buffett", "Howard Marks", "Paul Tudor Jones", "Ken Griffin", "Fred Wilson",
                     "Scott Rubner", "Leopold Aschenbrenner", "Dan Ives", "Stanley Druckenmiller",
                     "Bill Ackman", "Mark Minervini", "Ray Dalio", "Michael Burry", "Jamie Dimon",
-                    "Larry Fink", "Jeffrey Gundlach"]
+                    "Larry Fink", "Jeffrey Gundlach", "Tom Lee", "Morgan Stanley Wilson"]
 PEOPLE_TECH_KO = ["일론 머스크", "젠슨 황", "샘 올트먼", "다리오 아모데이", "순다르 피차이", "손정의",
-                  "마크 저커버그", "사티아 나델라", "팀 쿡", "리사 수"]
+                  "마크 저커버그", "사티아 나델라", "팀 쿡", "리사 수", "피터 틸"]
 PEOPLE_TECH_EN = ["Elon Musk", "Jensen Huang", "Sam Altman", "Dario Amodei", "Sundar Pichai",
-                  "Masayoshi Son", "Mark Zuckerberg", "Satya Nadella", "Tim Cook", "Lisa Su"]
+                  "Masayoshi Son", "Mark Zuckerberg", "Satya Nadella", "Tim Cook", "Lisa Su", "Peter Thiel"]
 PEOPLE_POLICY_KO = ["트럼프", "베선트", "러트닉 상무장관", "파월"]
 PEOPLE_POLICY_EN = ["Trump", "Bessent", "Lutnick", "Powell"]
 
@@ -87,7 +94,64 @@ for i, grp in enumerate(chunks(PEOPLE_TECH_EN, 5), 1):
 PEOPLE_FEEDS.append(("인물-정치", gnews(names_query(PEOPLE_POLICY_KO) + " 발언 중간선거")))
 PEOPLE_FEEDS.append(("인물-정치(영문)", gnews(names_query(PEOPLE_POLICY_EN) + " says midterm", "en")))
 
-FEEDS = PEOPLE_FEEDS + [
+# 시가총액 상위 대형주 (이름만 고치면 됩니다)
+MEGA_KO = ["엔비디아", "애플", "마이크로소프트", "구글 알파벳", "아마존", "메타", "테슬라", "브로드컴", "TSMC",
+           "AMD", "인텔", "마이크론", "SK하이닉스", "팔란티어", "오라클", "넷플릭스", "JP모건", "일라이릴리",
+           "비자", "월마트", "엑슨모빌", "록히드마틴", "ASML", "퀄컴", "스페이스X"]
+MEGA_EN = ["Nvidia", "Apple", "Microsoft", "Alphabet Google", "Amazon", "Meta", "Tesla", "Broadcom", "TSMC",
+           "AMD", "Intel", "Micron", "SK Hynix", "Palantir", "Oracle", "Netflix", "JPMorgan", "Eli Lilly",
+           "Visa", "Walmart", "Exxon", "Lockheed", "ASML", "Qualcomm", "SpaceX"]
+MEGA_FEEDS = []
+for i, grp in enumerate(chunks(MEGA_KO, 5), 1):
+    MEGA_FEEDS.append((f"대형주-{i}", gnews("(" + names_query(grp) + ") (실적 OR 인수 OR 소송 OR 규제 OR 가이던스 OR 계약)")))
+for i, grp in enumerate(chunks(MEGA_EN, 5), 1):
+    MEGA_FEEDS.append((f"대형주-영문{i}", gnews("(" + names_query(grp) + ") (earnings OR guidance OR acquisition OR lawsuit OR probe OR deal)", "en")))
+
+TOPIC_FEEDS = [
+    # 지켜보는 안전 신호: 대사관 인력 철수, 자국민 대피, 여행경보
+    ("경보-대사관", gnews("대사관 인력 철수 OR 대사관 감축 OR 자국민 대피 OR 여행경보 상향 OR 출국 권고")),
+    ("경보-대사관(영문)", gnews('embassy "ordered departure" OR "reduce staff" OR evacuate OR "travel advisory" Middle East', "en")),
+    ("금-시세·중앙은행", gnews("금값 OR 금 시세 OR 중앙은행 금 매입 OR 금광주")),
+    ("금-영문", gnews('gold price OR "central bank" gold buying OR PBOC gold OR "gold miners"', "en")),
+    ("이슈-AI자금", gnews("AI 자금조달 우려 OR 데이터센터 투자 부채 OR 오픈AI 자금 OR AI 버블")),
+    ("이슈-AI자금(영문)", gnews('AI funding concerns OR data center debt OR OpenAI financing OR "AI bubble"', "en")),
+    ("이슈-보안", gnews("사이버 보안 해킹 취약점 OR 보안주 급등")),
+    ("이슈-보안(영문)", gnews("cybersecurity breach OR vulnerability CrowdStrike OR Palo Alto OR Cloudflare", "en")),
+]
+
+# 해마다 정해진 시기에 나오는 보고서 (그 달에만 찾아본다): {달: [(이름, 검색어, 언어)]}
+REPORT_MONTHS = {
+    1: [("다보스·WEF", "다보스 포럼 OR 세계경제포럼 글로벌 리스크 보고서", "ko"),
+        ("ARK Big Ideas", '"ARK Invest" "Big Ideas"', "en")],
+    2: [("ARK Big Ideas", '"ARK Invest" "Big Ideas"', "en")],
+    11: [("NDAA", '국방수권법 NDAA OR "National Defense Authorization Act" NDAA', "en")],
+    12: [("NDAA", '국방수권법 NDAA OR "National Defense Authorization Act" NDAA', "en"),
+         ("ARK Big Ideas", '"ARK Invest" "Big Ideas"', "en")],
+}
+REPORT_HOURS = 36
+
+
+def report_feeds(now):
+    out = []
+    for name, q, lang in REPORT_MONTHS.get(now.month, []):
+        out.append((f"보고서-{name}", gnews(q, lang, days=2), REPORT_HOURS))
+    return out
+
+
+def all_feeds(now):
+    return FEEDS + report_feeds(now)
+
+
+# 안전 신호: 대사관·자국민·여행경보 + 철수·감축·대피 같은 말이 함께 나온 제목
+ALERT_WHO = re.compile(r"대사관|영사관|자국민|교민|embassy|consulate|nationals|여행경보|여행 경보|travel advisory|여행금지", re.I)
+ALERT_WHAT = re.compile(r"철수|감축|대피|철군|출국|퇴거|이동|권고|폐쇄|상향|evacuat|ordered departure|depart|reduc|withdraw|draw ?down|leave|suspend|clos|urge|raise|level 4", re.I)
+
+
+def is_alert(title):
+    return bool(ALERT_WHO.search(title) and ALERT_WHAT.search(title))
+
+
+FEEDS = PEOPLE_FEEDS + MEGA_FEEDS + TOPIC_FEEDS + [
     ("연합뉴스 국제", "https://www.yna.co.kr/rss/international.xml"),
     ("연합뉴스 경제", "https://www.yna.co.kr/rss/economy.xml"),
     ("매일경제 증권", "https://www.mk.co.kr/rss/50200011/"),
@@ -158,7 +222,7 @@ def norm(title):
 
 # ---------------------------------------------------------------- 뉴스
 
-def parse_feed(name, url, now):
+def parse_feed(name, url, now, hours=NEWS_HOURS):
     r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
     root = ET.fromstring(r.content)
@@ -169,7 +233,7 @@ def parse_feed(name, url, now):
         if not title or not link:
             continue
         source = name
-        if " - " in title and (name.startswith("구글뉴스") or name.startswith("인물-")):
+        if " - " in title and name.startswith(GNEWS_PREFIXES):
             title, source = title.rsplit(" - ", 1)
         ts = None
         pub = it.findtext("pubDate")
@@ -180,10 +244,10 @@ def parse_feed(name, url, now):
                     ts = ts.replace(tzinfo=dt.timezone.utc)
             except (TypeError, ValueError):
                 ts = None
-        if ts and (now - ts) > dt.timedelta(hours=NEWS_HOURS):
+        if ts and (now - ts) > dt.timedelta(hours=hours):
             continue
         out.append({"title": title, "url": link, "source": source.strip(), "ts": ts,
-                    "person": name.startswith("인물-")})
+                    "person": name.startswith("인물-"), "alert": is_alert(title)})
     out.sort(key=lambda x: x["ts"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
     return out[:PER_FEED]
 
@@ -191,10 +255,12 @@ def parse_feed(name, url, now):
 def collect_news(now, failures):
     seen, cands = set(), []
     per_feed = []
-    for name, url in FEEDS:
+    for feed in all_feeds(now):
+        name, url = feed[0], feed[1]
+        hours = feed[2] if len(feed) > 2 else NEWS_HOURS
         time.sleep(0.3)  # 같은 사이트에 한꺼번에 몰리지 않게 살짝 쉰다
         try:
-            per_feed.append(parse_feed(name, url, now))
+            per_feed.append(parse_feed(name, url, now, hours))
         except Exception as e:  # 한 곳이 막혀도 계속
             failures.append({"name": f"뉴스: {name}", "error": err_text(e)})
     # 목록들을 번갈아 가며 담아 한쪽으로 쏠리지 않게 한다
@@ -205,7 +271,9 @@ def collect_news(now, failures):
                 if k and k not in seen:
                     seen.add(k)
                     cands.append(feed[i])
-    return cands[:MAX_CANDIDATES]
+    alerts = [c for c in cands if c.get("alert")][:MAX_ALERTS * 2]
+    rest = [c for c in cands if not c.get("alert")]
+    return (alerts + rest)[:MAX_CANDIDATES]
 
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
@@ -301,30 +369,40 @@ def market_text(data_path="data.json"):
 
 
 def build_prompt(cands, mkt):
-    lines = "\n".join(
-        f"{i}|{'[인물] ' if c.get('person') else ''}{c['source']}|{c['title']}" for i, c in enumerate(cands, 1)
-    )
-    return f"""너는 미국 주식과 비트코인·암호화폐에 투자하는 사람을 위한 아침 뉴스 편집자다.
-아래는 밤사이 모은 뉴스 제목 목록이다. 각 줄 형식은 "번호|출처|제목"이다. 출처 앞의 [인물]은 유명 인물의 발언·행보를 따라가는 검색에서 나온 기사라는 뜻이다. 영어 제목도 있다.
+    def tags(c):
+        t = ""
+        if c.get("alert"):
+            t += "[경보] "
+        if c.get("person"):
+            t += "[인물] "
+        return t
+
+    lines = "\n".join(f"{i}|{tags(c)}{c['source']}|{c['title']}" for i, c in enumerate(cands, 1))
+    return f"""너는 미국 주식·금·비트코인에 투자하는 사람을 위한 아침 뉴스 편집자다.
+아래는 밤사이 모은 뉴스 제목 목록이다. 각 줄 형식은 "번호|출처|제목"이다. 출처 앞의 [인물]은 유명 인물의 발언·행보를 따라가는 검색에서 나온 기사, [경보]는 대사관 인력 철수·자국민 대피·여행경보 관련 기사라는 뜻이다. 영어 제목도 있다.
 
 규칙
-1. 미국 증시나 비트코인·암호화폐 시장에 영향을 줄 만한 기사만 최대 {MAX_PICK}개 고른다.
+1. 미국 증시, 금, 비트코인·암호화폐 시장에 영향을 줄 만한 기사만 최대 {MAX_PICK}개 고른다.
    연예, 스포츠, 사건사고, 국내 정치 가십 등 관련 없는 기사는 버린다.
 2. 같은 사건을 다룬 기사는 하나만 고른다.
-3. category는 "월가", "테크", "지정학", "정치", "코인" 중 하나다. 기준은 아래와 같다.
-   - 월가: 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너(시타델), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너 같은 유명 투자자·애널리스트·금융사 수장의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
-   - 테크: 머스크, 젠슨 황, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의 같은 빅테크·AI 수장의 발언, 빅테크 실적과 주요 소식.
-   - 정치: 트럼프의 발언, 상무장관·재무장관 등 정책 당국자 발언, 중간선거와 관세 등 정책 소식.
-   - 지정학: 전쟁, 외교, 제재 등 국제 정세.
-   - 코인: 비트코인·이더리움·ETF·규제 소식.
-   각 분야 최대 4개까지만 고르고, 사람의 발언·행보를 다룬 기사([인물] 포함)를 시황 기사보다 우선한다.
+3. category는 {", ".join(f'"{c}"' for c in CATEGORIES)} 중 하나다. 기준과 최대 개수는 아래와 같다.
+   - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너(시타델), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
+   - 테크(최대 4): 머스크, 젠슨 황, 피터 틸, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의, 올트먼 같은 빅테크·AI 수장의 발언과 주요 소식.
+   - 대형주(최대 4): 엔비디아·애플·마이크로소프트·알파벳·아마존·메타·테슬라·브로드컴·TSMC 등 시가총액 상위 기업 개별 이슈(실적, 가이던스, 인수합병, 규제·소송, 대형 계약). 단순 주가 등락 기사는 제외.
+   - 이슈(최대 3): 요즘 시장의 쟁점. AI 자금조달 우려(데이터센터 투자·부채·오픈AI 자금), 사이버 보안 사고·보안주, 그 밖의 시장을 흔드는 이슈. title 맨 앞에 [AI자금] [보안] [기타] 중 하나를 붙인다.
+   - 금(최대 2): 금값 급변, 중앙은행(특히 중국)의 금 매입, 금광주·금 관련 정책 소식.
+   - 지정학: 전쟁, 외교, 제재 등. 소음이 많으니 일반 소식은 최대 2개만 고른다. 단 [경보] 기사는 개수와 상관없이 모두 고르고 category는 "지정학", level은 "high"로 한다.
+   - 정치(최대 3): 트럼프의 발언, 상무·재무장관 등 정책 당국자 발언, 중간선거와 관세 등 정책 소식.
+   - 코인(최대 3): 비트코인·이더리움·ETF·규제 소식.
+   - 보고서(최대 3): 세계경제포럼(다보스)·글로벌 리스크 보고서, 국방수권법(NDAA), ARK Big Ideas 같은 정기 보고서 소식. 이 분류의 기사에는 implication 항목도 쓴다: 제목만 보고 추정한 시장 시사점 한 문장. 반드시 "추정:"으로 시작하고, 제목에 없는 내용은 만들지 않는다.
+   사람의 발언·행보를 다룬 기사([인물] 포함)를 시황 기사보다 우선한다.
 4. title은 원래 제목의 뜻을 그대로 두고 40자 이내 한국어로 줄인다(영어는 번역한다). 사람의 발언이면 '인물 "핵심 발언"' 형식으로 쓴다.
    제목에 없는 사실, 숫자, 원인, 발언을 절대 덧붙이지 않는다.
-5. level은 "high"(시장 방향을 바꿀 수 있어 꼭 확인, 최대 3개), "mid"(참고), "low"(단기 소음일 가능성) 중 하나다.
+5. level은 "high"(시장 방향을 바꿀 수 있어 꼭 확인, 최대 4개), "mid"(참고), "low"(단기 소음일 가능성) 중 하나다.
 6. summary는 고른 기사와 아래 시장 숫자만 근거로 밤사이 분위기를 한국어 2문장 이내로 쓴다.
    원인을 단정하지 말고, 근거가 부족하면 "원인은 불명확"이라고 쓴다. 투자를 권유하는 표현은 쓰지 않는다.
 
-JSON만 출력한다. 형식: {{"summary": "...", "items": [{{"id": 번호, "category": "...", "title": "...", "level": "..."}}]}}
+JSON만 출력한다. 형식: {{"summary": "...", "items": [{{"id": 번호, "category": "...", "title": "...", "level": "...", "implication": "(보고서 분류에만)"}}]}}
 
 [시장 숫자]
 {mkt}
@@ -332,6 +410,15 @@ JSON만 출력한다. 형식: {{"summary": "...", "items": [{{"id": 번호, "cat
 [뉴스 목록]
 {lines}
 """
+
+
+def clip(text, n=60):
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+
+def item_sort_key(x):
+    return (0 if x.get("alert") else 1, LEVEL_ORDER.get(x["level"], 1),
+            CATEGORIES.index(x["category"]) if x["category"] in CATEGORIES else 99)
 
 
 def pick_with_ai(cands):
@@ -350,18 +437,36 @@ def pick_with_ai(cands):
         cat = it.get("category") if it.get("category") in CATEGORIES else "월가"
         level = it.get("level") if it.get("level") in LEVEL_ORDER else "mid"
         title = str(it.get("title") or src["title"]).strip()[:60]
-        items.append({"category": cat, "title": title, "url": src["url"], "source": src["source"], "level": level})
-    items.sort(key=lambda x: (LEVEL_ORDER[x["level"]], CATEGORIES.index(x["category"])))
-    return {"mode": "ai", "summary": str(result.get("summary") or "").strip(), "items": items[:MAX_PICK]}
+        row = {"category": cat, "title": title, "url": src["url"], "source": src["source"], "level": level}
+        if src.get("alert"):  # 안전 신호는 분류·중요도를 코드가 고정한다
+            row.update({"category": "지정학", "level": "high", "alert": True})
+        if cat == "보고서" and it.get("implication"):
+            row["implication"] = str(it["implication"]).strip()[:120]
+        items.append(row)
+    # AI가 빠뜨린 안전 신호는 코드가 직접 넣는다 (제목은 원문 그대로)
+    n_alert = sum(1 for x in items if x.get("alert"))
+    for i, c in enumerate(cands, 1):
+        if c.get("alert") and i not in used and n_alert < MAX_ALERTS:
+            items.append({"category": "지정학", "title": clip(c["title"]), "url": c["url"], "source": c["source"],
+                          "level": "high", "alert": True})
+            n_alert += 1
+    items.sort(key=item_sort_key)
+    alerts = [x for x in items if x.get("alert")][:MAX_ALERTS]
+    others = [x for x in items if not x.get("alert")][:MAX_PICK]
+    return {"mode": "ai", "summary": str(result.get("summary") or "").strip(), "items": alerts + others}
 
 
 def pick_raw(cands):
-    """AI를 못 쓸 때: 목록마다 번갈아 가며 제목만 보여준다."""
+    """AI를 못 쓸 때: 목록마다 번갈아 가며 제목만 보여준다. 안전 신호는 그대로 챙긴다."""
+    alerts = [
+        {"category": "지정학", "title": clip(c["title"]), "url": c["url"], "source": c["source"], "level": "high", "alert": True}
+        for c in cands if c.get("alert")
+    ][:MAX_ALERTS]
     items = [
         {"category": "주요 뉴스", "title": c["title"][:60], "url": c["url"], "source": c["source"], "level": "mid"}
-        for c in cands[:10]
-    ]
-    return {"mode": "raw", "summary": "", "items": items}
+        for c in cands if not c.get("alert")
+    ][:10]
+    return {"mode": "raw", "summary": "", "items": alerts + items}
 
 
 # ---------------------------------------------------------------- 주식 공포탐욕
@@ -466,6 +571,8 @@ def manual_events(now, econ_titles):
         except (KeyError, ValueError, TypeError):
             continue
         title = str(m.get("title", "")).strip()
+        if m.get("kind") == "지표":
+            continue  # 경제지표는 경제 캘린더가 알려주므로 매일 일정에서는 뺀다(월말 다음 달 일정에는 보임)
         if not title or not (now.date() <= d.date() <= (now + dt.timedelta(days=14)).date()):
             continue
         if "FOMC" in title and any("FOMC" in t for t in econ_titles):
@@ -521,6 +628,84 @@ def cmc_fear_greed():
     return {"value": float(d["value"]), "label": d.get("value_classification", "")}
 
 
+# ---------------------------------------------------------------- 정기 코너
+
+PREVIEW_EARN = {"NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "TSM", "AMD", "INTC", "MU",
+                "ORCL", "PLTR", "NFLX", "CRM", "JPM", "GS", "WMT", "HD", "COST", "LLY", "UNH", "XOM", "BA",
+                "COIN", "MSTR", "ASML", "QCOM", "ANET", "SMCI", "VRT", "CRDO"}
+
+
+def forced(name):
+    """GitHub에서 손으로 실행할 때 force_sections 칸에 적은 코너는 오늘이 아니어도 보여준다(테스트용)."""
+    return name in [x.strip() for x in os.environ.get("FORCE_SECTIONS", "").split(",")]
+
+
+def read_json_file(path, default):
+    try:
+        with open(path, encoding="utf-8") as fp:
+            return json.load(fp)
+    except (OSError, ValueError):
+        return default
+
+
+def month_preview(now):
+    """월말(내일이 다음 달)에 보여줄 다음 달 주요 일정. events.json + 주요 기업 실적."""
+    tomorrow = now + dt.timedelta(days=1)
+    if tomorrow.month == now.month and not forced("monthend"):
+        return None
+    # 다음 달 1일 ~ 말일 (테스트로 강제할 때도 같은 계산)
+    first = (now.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
+    last = (first + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+    events = []
+    for m in read_json_file("events.json", []):
+        try:
+            d = dt.datetime.strptime(m["date"], "%Y-%m-%d")
+        except (KeyError, ValueError, TypeError):
+            continue
+        if first.date() <= d.date() <= last.date():
+            events.append({"ymd": m["date"], "title": str(m.get("title", "")), "kind": m.get("kind") or "이벤트"})
+    events.sort(key=lambda x: x["ymd"])
+    out = {"label": f"{first.month}월", "events": events, "earnings": [], "error": None}
+    try:
+        for e in earnings_range(f"{first:%Y-%m-%d}", f"{last:%Y-%m-%d}"):
+            if e["symbol"] in PREVIEW_EARN:
+                out["earnings"].append(e)
+    except Exception as e:
+        out["error"] = err_text(e)
+    return out
+
+
+def monthly_reminders(now):
+    if now.day != 1 and not forced("monthly"):
+        return None
+    items = read_json_file("reminders.json", {}).get("monthly", [])
+    return [str(x) for x in items if str(x).strip()] or None
+
+
+def economist_cover(now):
+    """이코노미스트 표지지표(반대로 해석하는 참고용). 금요일(새 호 발행 다음 날)에 보여준다.
+    표지 그림 자체는 자동으로 읽을 수 없어, 관련 기사 제목 + covers.json 에 직접 적은 내용을 보여준다."""
+    if now.weekday() != 4 and not forced("cover"):
+        return None
+    out = {"manual": None, "links": [], "error": None}
+    for c in read_json_file("covers.json", []):
+        try:
+            d = dt.datetime.strptime(c["date"], "%Y-%m-%d").date()
+        except (KeyError, ValueError, TypeError):
+            continue
+        if 0 <= (now.date() - d).days <= 7:
+            out["manual"] = {"date": c["date"], "topic": str(c.get("topic", "")), "reading": str(c.get("reading", ""))}
+    try:
+        url = gnews('"The Economist" cover OR "this week\'s cover" OR "weekly edition"', "en", days=3)
+        found = [it for it in parse_feed("표지-이코노미스트", url, now, 72)
+                 if re.search(r"economist|이코노미스트", it["title"] + " " + it["source"], re.I)]
+        for it in found[:3]:
+            out["links"].append({"title": it["title"][:80], "url": it["url"], "source": it["source"]})
+    except Exception as e:
+        out["error"] = err_text(e)
+    return out
+
+
 # ---------------------------------------------------------------- 실행
 
 def main():
@@ -562,6 +747,16 @@ def main():
         out["coin_fg_cmc"] = cmc_fear_greed()
     except Exception as e:
         failures.append({"name": "코인 공포탐욕(CMC)", "error": err_text(e)})
+
+    try:
+        out["month_preview"] = month_preview(now)
+    except Exception as e:
+        failures.append({"name": "다음 달 일정", "error": err_text(e)})
+    out["monthly_reminders"] = monthly_reminders(now)
+    try:
+        out["cover"] = economist_cover(now)
+    except Exception as e:
+        failures.append({"name": "이코노미스트 표지", "error": err_text(e)})
 
     out["failures"] = failures
     with open("extras.json", "w", encoding="utf-8") as fp:
