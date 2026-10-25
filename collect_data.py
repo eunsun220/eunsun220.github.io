@@ -211,15 +211,19 @@ def metrics():
         {"group": "금리", "name": "미국 10년물 금리", "fn": yield_10y, "kind": "level", "unit": "%", "scale": 1, "freq": "일간"},
         {"group": "금리", "name": "장단기금리차(10년-2년)", "fn": lambda: fred("T10Y2Y"), "kind": "level", "unit": "%p", "scale": 1, "freq": "일간(하루 늦음)"},
         # 유동성 (대부분 주 1회 발표)
-        {"group": "유동성", "name": "연준 대차대조표", "fn": lambda: fred("WALCL"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간"},
-        {"group": "유동성", "name": "은행 지급준비금", "fn": lambda: fred("WRESBAL"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간"},
-        {"group": "유동성", "name": "재무부 일반계정(TGA, 주평균)", "fn": lambda: fred("WTREGEN"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간"},
-        {"group": "유동성", "name": "은행 대출 및 리스", "fn": lambda: fred("TOTLL"), "kind": "level", "unit": "조 달러", "scale": 1e3, "freq": "주간"},
-        {"group": "유동성", "name": "은행 신용 총액", "fn": lambda: fred("TOTBKCR"), "kind": "level", "unit": "조 달러", "scale": 1e3, "freq": "주간"},
+        {"group": "유동성", "name": "연준 대차대조표", "fn": lambda: fred("WALCL"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간",
+         "hint": "연준의 자산 전체 → 늘면 시중에 돈이 풀림 → 위험자산 우호적", "up": "우호", "thr": 0.01},
+        {"group": "유동성", "name": "은행 지급준비금", "fn": lambda: fred("WRESBAL"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간",
+         "hint": "은행이 연준에 맡겨둔 돈(시중 현금의 핵심) → 늘면 위험자산 우호적", "up": "우호", "thr": 0.02},
+        {"group": "유동성", "name": "재무부 일반계정(TGA, 주평균)", "fn": lambda: fred("WTREGEN"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간",
+         "hint": "미국 정부가 연준에 가진 현금 잔고 → 늘면 은행 준비금이 줄어듦 → 위험자산 부담", "up": "부담", "thr": 0.02},
+        {"group": "유동성", "name": "역레포(RRP)", "fn": lambda: fred("RRPONTSYD"), "kind": "level", "unit": "조 달러", "scale": 1e3, "freq": "일간(하루 늦음)", "digits": 3,
+         "hint": "시장 자금이 연준에 하룻밤 맡겨둔 돈 → 늘면 시장 돈이 묶임 → 위험자산 부담 (줄면 풀려서 우호적)", "up": "부담", "thr": 0.01},
         {"group": "유동성", "name": "금융상황지수 NFCI(클수록 불안)", "fn": lambda: fred("NFCI"), "kind": "level", "unit": "", "scale": 1, "freq": "주간", "digits": 3, "post": nfci_trend},
         # 코인
         {"group": "코인", "name": "코인 공포탐욕지수(0~100)", "fn": crypto_fear_greed, "kind": "level", "unit": "", "scale": 1, "freq": "일간"},
-        {"group": "코인", "name": "스테이블코인 총 발행량(7일 전 대비)", "fn": stablecoin_supply, "kind": "price", "unit": "억 달러", "scale": 1e8, "freq": "일간"},
+        {"group": "코인", "name": "스테이블코인 총 발행량(7일 전 대비)", "fn": stablecoin_supply, "kind": "price", "unit": "억 달러", "scale": 1e8, "freq": "일간",
+         "hint": "코인 시장에 들어와 있는 달러 → 늘면 새 돈이 유입됨 → 코인에 우호적 (줄면 이탈)", "up": "우호", "thr": 0.3, "target": "코인"},
     ]
 
 
@@ -250,6 +254,14 @@ def build(item):
         "label": raw.get("label"),
         "digits": item.get("digits"),
     }
+    if item.get("hint"):
+        row["hint"] = item["hint"]
+        row["target"] = item.get("target", "위험자산")
+        if change is not None:
+            if abs(change) < item.get("thr", 0):
+                row["effect"] = "flat"
+            else:
+                row["effect"] = "우호" if (change > 0) == (item.get("up") == "우호") else "부담"
     if item.get("post"):
         try:
             row["note"] = item["post"]()
