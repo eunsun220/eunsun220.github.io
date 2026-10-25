@@ -398,7 +398,7 @@ def build_prompt(cands, mkt):
    - 지정학: 전쟁, 외교, 제재 등. 소음이 많으니 일반 소식은 최대 2개만 고른다. 단 [경보] 기사는 개수와 상관없이 모두 고르고 category는 "지정학", level은 "high"로 한다.
    - 정치(최대 3): 트럼프의 발언, 상무·재무장관 등 정책 당국자 발언, 중간선거와 관세 등 정책 소식.
    - 코인(최대 3): 비트코인·이더리움·ETF·규제 소식.
-   - 보고서(최대 3): 세계경제포럼(다보스)·글로벌 리스크 보고서, 국방수권법(NDAA), ARK Big Ideas 같은 정기 보고서 소식. 이 분류의 기사에는 implication 항목도 쓴다: 제목만 보고 추정한 시장 시사점 한 문장. 반드시 "추정:"으로 시작하고, 제목에 없는 내용은 만들지 않는다.
+   - 보고서(최대 3): 오직 세계경제포럼(다보스)·글로벌 리스크 보고서, 국방수권법(NDAA), ARK Big Ideas 기사일 때만 쓴다. 다른 기관의 보고서나 업종 전망은 보고서로 분류하지 않는다. 이 분류의 기사에는 implication 항목도 쓴다: 제목만 보고 추정한 시장 시사점 한 문장. 반드시 "추정:"으로 시작하고, 제목에 없는 내용은 만들지 않는다.
    사람의 발언·행보를 다룬 기사([인물] 포함)를 시황 기사보다 우선한다.
 4. title은 원래 제목의 뜻을 그대로 두고 40자 이내 한국어로 줄인다(영어는 번역한다). 사람의 발언이면 '인물 "핵심 발언"' 형식으로 쓴다.
    제목에 없는 사실, 숫자, 원인, 발언을 절대 덧붙이지 않는다.
@@ -414,6 +414,14 @@ JSON만 출력한다. 형식: {{"summary": "...", "items": [{{"id": 번호, "cat
 [뉴스 목록]
 {lines}
 """
+
+
+TAG_RE = re.compile(r"^\s*(\[(?:경보|인물)\]\s*)+")
+
+
+def clean_title(text):
+    """AI가 목록의 [경보]·[인물] 표시를 제목에 그대로 옮겨 적는 경우가 있어 지운다."""
+    return TAG_RE.sub("", str(text)).strip()
 
 
 def clip(text, n=60):
@@ -440,7 +448,10 @@ def pick_with_ai(cands):
         src = cands[idx - 1]
         cat = it.get("category") if it.get("category") in CATEGORIES else "월가"
         level = it.get("level") if it.get("level") in LEVEL_ORDER else "mid"
-        title = str(it.get("title") or src["title"]).strip()[:60]
+        title = clean_title(it.get("title") or src["title"])[:60]
+        if cat == "보고서" and not REPORT_MONTHS.get(dt.datetime.now(KST).month):
+            cat = "이슈"  # 보고서 시기가 아닐 때는 일반 이슈로 보낸다 (엉뚱한 보고서 기사 방지)
+            it = {k: v for k, v in it.items() if k != "implication"}
         row = {"category": cat, "title": title, "url": src["url"], "source": src["source"], "level": level}
         if src.get("alert"):  # 안전 신호는 분류·중요도를 코드가 고정한다
             row.update({"category": "지정학", "level": "high", "alert": True})
