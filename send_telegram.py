@@ -28,7 +28,7 @@ RATING_KO = {
     "extreme fear": "극단적 공포", "fear": "공포", "neutral": "중립",
     "greed": "탐욕", "extreme greed": "극단적 탐욕",
 }
-NEWS_ORDER = ["월가", "테크", "지정학", "정치", "코인", "주요 뉴스"]
+NEWS_ORDER = ["월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서", "주요 뉴스"]
 
 
 def esc(s):
@@ -116,6 +116,21 @@ def fear_greed_lines(rows, extras):
     return out
 
 
+def alert_block(extras):
+    """대사관 인력 철수·자국민 대피·여행경보 같은 안전 신호. 없으면 '없음'이라고 알려준다."""
+    news = (extras or {}).get("news")
+    if not news:
+        return None
+    alerts = [it for it in news.get("items", []) if it.get("alert")]
+    lines = ["<b>🚨 지정학 안전 신호</b> 대사관 인력 철수·자국민 대피·여행경보"]
+    if not alerts:
+        lines.append("• 새로 확인된 소식 없음")
+    for it in alerts:
+        url = html.escape(it["url"], quote=True)
+        lines.append(f'• <a href="{url}">{esc(it["title"])}</a> ({esc(it.get("source", ""))})')
+    return "\n".join(lines)
+
+
 def news_blocks(extras):
     news = (extras or {}).get("news")
     if not news or not news.get("items"):
@@ -125,6 +140,8 @@ def news_blocks(extras):
         blocks.append("<b>한 줄 요약</b>\n" + esc(news["summary"]))
     by_cat = {}
     for it in news["items"]:
+        if it.get("alert"):
+            continue  # 안전 신호는 위 별도 칸에 보여준다
         by_cat.setdefault(it["category"], []).append(it)
     lines = ["<b>[밤사이 핵심 뉴스]</b> 🔴 꼭 확인 · 🟡 참고 · ⚪ 단기 소음 가능"]
     cats = [c for c in NEWS_ORDER if c in by_cat] + [c for c in by_cat if c not in NEWS_ORDER]
@@ -134,6 +151,8 @@ def news_blocks(extras):
             mark = LEVEL_MARK.get(it["level"], "🟡")
             url = html.escape(it["url"], quote=True)
             lines.append(f'{mark} <a href="{url}">{esc(it["title"])}</a>')
+            if it.get("implication"):
+                lines.append("   ↳ " + esc(it["implication"]))
     if news.get("mode") == "raw":
         lines.append("\n※ AI 선별이 안 돼 제목만 모았습니다.")
     blocks.append("\n".join(lines))
@@ -221,11 +240,76 @@ def week_block(extras):
     return "\n".join(lines)
 
 
-def build_blocks(data, extras):
+def cover_block(extras):
+    c = (extras or {}).get("cover")
+    if not c:
+        return None
+    lines = ["<b>[이코노미스트 표지지표]</b> 표지 주제와 반대로 맞는 경우가 많다는 참고용 지표 (매주 목요일 발행)"]
+    m = c.get("manual")
+    if m:
+        lines.append(f"• 표지 주제: {esc(m['topic'])} ({esc(m['date'])})")
+        if m.get("reading"):
+            lines.append("   ↳ " + esc(m["reading"]))
+    else:
+        lines.append("• 이번 주 표지 주제는 직접 확인이 필요합니다: economist.com/weeklyedition")
+        lines.append("   ↳ 알려주시면 covers.json 에 적어 두고 '반대로 읽기'를 함께 보내드립니다.")
+    for it in c.get("links") or []:
+        url = html.escape(it["url"], quote=True)
+        lines.append(f'• 관련 기사: <a href="{url}">{esc(it["title"])}</a>')
+    return "\n".join(lines)
+
+
+def month_block(extras):
+    mp = (extras or {}).get("month_preview")
+    if not mp:
+        return None
+    items = [(e["ymd"], "", f"{KIND_MARK.get(e['kind'], '📌')} {esc(e['title'])}") for e in mp.get("events") or []]
+    items += [(e["ymd"], "", earn_text(e)) for e in mp.get("earnings") or []]
+    lines = [f"<b>[다음 달({esc(mp['label'])}) 주요 일정]</b> 월말 정리 (날짜는 미국 기준, 실적은 주요 기업만)"]
+    lines += group_lines(items)
+    if mp.get("error"):
+        lines.append(f"※ 실적 일정을 가져오지 못했습니다({esc(mp['error'])})")
+    if len(lines) == 1:
+        lines.append("• 등록된 일정이 없습니다. events.json 에 추가할 수 있습니다.")
+    return "\n".join(lines)
+
+
+def reminder_block(extras):
+    items = (extras or {}).get("monthly_reminders")
+    if not items:
+        return None
+    return "\n".join(["<b>[매달 1일 다시 보는 메모]</b>"] + [f"{i}. {esc(t)}" for i, t in enumerate(items, 1)])
+
+
+def weekly_block(weekly):
+    if not weekly or not weekly.get("groups"):
+        return None
+    d = weekly.get("as_of") or ""
+    title = f"<b>[주간 특징주 요약]</b> {esc(d[5:7] + '/' + d[8:10]) if d else ''} 기준, 최근 5거래일 등락률"
+    lines = [title]
+    themes = weekly.get("themes") or {}
+    for n, g in enumerate(weekly["groups"], 1):
+        lines.append(f"\n<b>{n}. {esc(g['category'])}</b>")
+        if themes.get(g["category"]):
+            lines.append("💡 " + esc(themes[g["category"]]))
+        for sub in g["subs"]:
+            parts = []
+            for r in sub["rows"]:
+                mark = "🟢" if r["change"] > 0 else ("🔴" if r["change"] < 0 else "⚪")
+                parts.append(f"{mark}{esc(r['symbol'])} {r['change']:+.1f}%")
+            lines.append(f"{esc(sub['label'])}: " + " ".join(parts))
+    lines.append("\n※ 💡 한 줄은 이번 주 기사 제목만 보고 AI가 쓴 참고용 요약입니다.")
+    return "\n".join(lines)
+
+
+def build_blocks(data, extras, weekly=None):
     now = dt.datetime.now(KST)
     blocks = [f"<b>아침 시황 | {now.month}월 {now.day}일({WEEKDAYS[now.weekday()]})</b>\n{now:%H:%M} KST 기준으로 모은 정보입니다."]
 
     rows = data["rows"]
+    ab = alert_block(extras)
+    if ab:
+        blocks.append(ab)
     nb = news_blocks(extras)  # 요약이 있으면 [요약, 뉴스 목록], 없으면 [뉴스 목록]
     if len(nb) == 2:
         blocks.append(nb[0])
@@ -250,13 +334,15 @@ def build_blocks(data, extras):
     # 요약은 위에서 이미 넣었으므로 뉴스 목록만 붙인다
     if nb:
         blocks.append(nb[-1])
-    for b in (today_block(extras), week_block(extras)):
+    for b in (today_block(extras), week_block(extras), weekly_block(weekly), cover_block(extras),
+              month_block(extras), reminder_block(extras)):
         if b:
             blocks.append(b)
 
     # 숫자 쪽 오류 글에는 주소(=키)가 섞일 수 있어 이름만, 뉴스·일정 쪽은 오류 종류까지 보여준다
     missing = [f["name"] for f in (data.get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((extras or {}).get("failures") or [])]
+    missing += [f"{f['name']}({f['error']})" for f in ((weekly or {}).get("failures") or [])]
     if missing:
         blocks.append("가져오지 못한 항목: " + esc(", ".join(missing)))
     blocks.append("AI가 정리한 참고용입니다. 투자 판단은 본인이 합니다.")
@@ -345,7 +431,11 @@ def main():
         print("data.json 이 없습니다. collect_data.py 가 먼저 돌아야 합니다.")
         sys.exit(1)
     extras = load("extras.json")
-    for chunk in split_blocks(build_blocks(data, extras)):
+    weekly = load("weekly.json")
+    today = dt.datetime.now(KST).strftime("%Y-%m-%d")
+    if weekly and str(weekly.get("generated_at", ""))[:10] != today:
+        weekly = None  # 오늘 만든 것만 쓴다
+    for chunk in split_blocks(build_blocks(data, extras, weekly)):
         send(token, chat_id, chunk)
     print("텔레그램으로 보냈습니다.")
 
