@@ -113,6 +113,45 @@ def nfci_trend(hist=None):
     return "\n".join(lines)
 
 
+HY_WINDOW = 60     # 거래일. 약 3개월 안에서 고점·저점을 찾는다
+HY_MIN_MOVE = 0.25  # %p. 이 정도는 움직여야 "전환"으로 본다 (잔 흔들림은 무시)
+
+
+def hy_trend(hist=None):
+    """하이일드 스프레드(위험한 회사채가 국채보다 더 주는 이자)의 방향 전환을 알려준다.
+    고점을 찍고 내려가기 시작 = 위기 우려가 가라앉는 신호 후보 / 바닥을 찍고 올라가기 시작 = 경계 신호 후보."""
+    hist = hist if hist is not None else fred_history("BAMLH0A0HYM2", 270)
+    vals = [v for _, v in hist]
+    if len(vals) < HY_WINDOW + 5:
+        raise RuntimeError("기록이 부족함")
+    cur, ago5, ago20 = vals[-1], vals[-6], vals[-21]
+    win = vals[-HY_WINDOW:]
+    peak, trough = max(win), min(win)
+    peak_age = len(win) - 1 - max(i for i, v in enumerate(win) if v == peak)
+    trough_age = len(win) - 1 - max(i for i, v in enumerate(win) if v == trough)
+    chg20 = cur - ago20
+    if peak - cur >= HY_MIN_MOVE and 3 <= peak_age <= 30 and cur < ago5 and peak - trough >= HY_MIN_MOVE * 2:
+        verdict = "⬇ 고점을 찍고 내려가기 시작 → 위기 우려가 가라앉는 신호 후보 (증시 저점 신호 후보)"
+    elif cur - trough >= HY_MIN_MOVE and 3 <= trough_age <= 30 and cur > ago5 and peak - trough >= HY_MIN_MOVE * 2:
+        verdict = "⬆ 바닥을 찍고 올라가기 시작 → 경계 신호 후보"
+    elif chg20 >= 0.15:
+        verdict = "⬆ 오르는 중 → 위기 우려가 커지는 쪽 (아직 고점 확인 전)"
+    elif chg20 <= -0.15:
+        verdict = "⬇ 내려오는 중 → 위기 우려가 줄어드는 쪽"
+    else:
+        verdict = "➖ 뚜렷한 방향 없음"
+    lines = [
+        f"4주 전 대비 {chg20:+.2f}%p · 최근 3개월 고점 {peak:.2f}({peak_age}거래일 전) / 저점 {trough:.2f}({trough_age}거래일 전)",
+        f"판단: {verdict}",
+    ]
+    if len(vals) >= 250:
+        year = vals[-250:]
+        lo, hi = min(year), max(year)
+        pos = (cur - lo) / (hi - lo) * 100 if hi > lo else 50
+        lines.append(f"1년 범위 {lo:.2f}(가장 안정) ~ {hi:.2f}(가장 불안), 지금은 {pos:.0f}% 지점")
+    return "\n".join(lines)
+
+
 def yahoo(symbol):
     """Yahoo Finance(비공식)에서 일봉 종가를 가져온다."""
     r = requests.get(
@@ -207,9 +246,12 @@ def metrics():
         {"group": "시장", "name": "필라델피아 반도체지수", "fn": lambda: yahoo("^SOX"), "kind": "price", "unit": "", "scale": 1, "freq": "일간"},
         {"group": "시장", "name": "원/달러 환율", "fn": lambda: yahoo("KRW=X"), "kind": "price", "unit": "원", "scale": 1, "freq": "일간"},
         {"group": "시장", "name": "비트코인", "fn": lambda: yahoo("BTC-USD"), "kind": "price", "unit": "달러", "scale": 1, "freq": "일간"},
+        {"group": "시장", "name": "금 선물", "fn": lambda: yahoo("GC=F"), "kind": "price", "unit": "달러", "scale": 1, "freq": "일간"},
         # 금리
         {"group": "금리", "name": "미국 10년물 금리", "fn": yield_10y, "kind": "level", "unit": "%", "scale": 1, "freq": "일간"},
         {"group": "금리", "name": "장단기금리차(10년-2년)", "fn": lambda: fred("T10Y2Y"), "kind": "level", "unit": "%p", "scale": 1, "freq": "일간(하루 늦음)"},
+        {"group": "금리", "name": "하이일드 스프레드(위기 선행지표)", "fn": lambda: fred("BAMLH0A0HYM2"), "kind": "level", "unit": "%", "scale": 1, "freq": "일간(하루 늦음)", "digits": 2,
+         "post": hy_trend, "hint": "위험한 회사채가 국채보다 더 주는 이자 → 커지면 위기 우려↑(위험자산 부담), 고점 찍고 내려오면 안도", "up": "부담", "thr": 0.03},
         # 유동성 (대부분 주 1회 발표)
         {"group": "유동성", "name": "연준 대차대조표", "fn": lambda: fred("WALCL"), "kind": "level", "unit": "조 달러", "scale": 1e6, "freq": "주간",
          "hint": "연준의 자산 전체 → 늘면 시중에 돈이 풀림 → 위험자산 우호적", "up": "우호", "thr": 0.01},
