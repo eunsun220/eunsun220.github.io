@@ -79,6 +79,15 @@ def line(row, now):
     out = esc(text)
     if row.get("note"):
         out += "".join("\n   ↳ " + esc(ln) for ln in row["note"].split("\n"))
+    if row.get("hint"):
+        tail = ""
+        eff = row.get("effect")
+        if eff == "flat":
+            tail = " · 이번엔 큰 변화 없음"
+        elif eff and row["change"] is not None:
+            arrow = "⬆ 늘어남" if row["change"] > 0 else "⬇ 줄어듦"
+            tail = f" · 이번엔 {arrow} → {row.get('target', '위험자산')} {'우호적' if eff == '우호' else '부담'}"
+        out += "\n   ↳ " + esc(row["hint"] + tail)
     return out
 
 
@@ -233,7 +242,7 @@ def build_blocks(data, extras):
             groups[row["group"]] = []
             order.append(row["group"])
         groups[row["group"]].append(row)
-    notes = {"유동성": "주 1회 발표라 며칠 전 숫자입니다", "금리": "장단기금리차는 하루 늦게 반영됩니다"}
+    notes = {"유동성": "대부분 주 1회 발표라 며칠 전 숫자입니다", "금리": "장단기금리차는 하루 늦게 반영됩니다"}
     for g in order:
         title = f"<b>[{esc(g)}]</b>" + (f" {notes[g]}" if g in notes else "")
         blocks.append("\n".join([title] + [line(r, now) for r in groups[g]]))
