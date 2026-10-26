@@ -42,8 +42,8 @@ PER_FEED = 10            # 목록마다 최대 몇 개까지 후보로 쓸지
 MAX_CANDIDATES = 220     # AI에게 보여줄 최대 기사 수
 MAX_PICK = 24            # 화면에 보여줄 최대 기사 수
 MAX_ALERTS = 5           # 안전 신호(대사관 철수 등)는 최대 이만큼 무조건 보여준다
-CATEGORIES = ["월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서"]
-GNEWS_PREFIXES = ("구글뉴스", "인물-", "대형주-", "금-", "이슈-", "경보-", "보고서-", "표지-")
+CATEGORIES = ["보유", "월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서"]
+GNEWS_PREFIXES = ("구글뉴스", "보유-", "인물-", "대형주-", "금-", "이슈-", "경보-", "보고서-", "표지-")
 LEVEL_ORDER = {"high": 0, "mid": 1, "low": 2}
 
 
@@ -93,6 +93,35 @@ for i, grp in enumerate(chunks(PEOPLE_TECH_EN, 5), 1):
     PEOPLE_FEEDS.append((f"인물-테크(영문){i}", gnews(names_query(grp), "en")))
 PEOPLE_FEEDS.append(("인물-정치", gnews(names_query(PEOPLE_POLICY_KO) + " 발언 중간선거")))
 PEOPLE_FEEDS.append(("인물-정치(영문)", gnews(names_query(PEOPLE_POLICY_EN) + " says midterm", "en")))
+
+# ---- 내 보유 종목: 코드에 적지 않고 GitHub 금고(HOLDINGS)에서만 읽는다 ----
+# 형식: 심볼=이름 (쉼표로 구분). 이름 뒤에 |영문이름을 붙이면 영어 기사도 찾는다.
+# 예) MU=마이크론|Micron,000660.KS=SK하이닉스|SK Hynix
+def parse_holdings():
+    out = []
+    for part in re.split(r"[,\n]+", os.environ.get("HOLDINGS", "")):
+        if "=" not in part:
+            continue
+        sym, name = [x.strip() for x in part.split("=", 1)]
+        if not sym or not name:
+            continue
+        ko, _, en = name.partition("|")
+        out.append({"symbol": sym, "ko": ko.strip(), "en": en.strip()})
+    return out
+
+
+HOLDINGS = parse_holdings()
+HOLD_KO = '(CEO OR 실적 OR EPS OR 목표주가 OR 내부자 OR 매수 OR 가이던스 OR 전망 OR 상향)'
+HOLD_EN = '(CEO OR "EPS estimate" OR "price target" OR "insider buying" OR guidance OR upgrade OR downgrade)'
+HOLD_FEEDS = []
+for i, h in enumerate(HOLDINGS, 1):
+    terms = [f'"{h["ko"]}"'] + ([f'"{h["en"]}"'] if h["en"] else [])
+    if re.fullmatch(r"[A-Za-z]{1,5}", h["symbol"]):
+        terms.append(h["symbol"].upper())
+    HOLD_FEEDS.append((f"보유-{i}", gnews("(" + " OR ".join(terms) + ") " + HOLD_KO)))
+_en_names = [f'"{h["en"]}"' for h in HOLDINGS if h["en"]]
+for i, grp in enumerate(chunks(_en_names, 4), 1):
+    HOLD_FEEDS.append((f"보유-영문{i}", gnews("(" + " OR ".join(grp) + ") " + HOLD_EN, "en")))
 
 # 시가총액 상위 대형주 (이름만 고치면 됩니다)
 MEGA_KO = ["엔비디아", "애플", "마이크로소프트", "구글 알파벳", "아마존", "메타", "테슬라", "브로드컴", "TSMC",
@@ -155,7 +184,7 @@ def is_alert(title):
     return bool(ALERT_WHO.search(title) and ALERT_WHAT.search(title))
 
 
-FEEDS = PEOPLE_FEEDS + MEGA_FEEDS + TOPIC_FEEDS + [
+FEEDS = HOLD_FEEDS + PEOPLE_FEEDS + MEGA_FEEDS + TOPIC_FEEDS + [
     ("연합뉴스 국제", "https://www.yna.co.kr/rss/international.xml"),
     ("연합뉴스 경제", "https://www.yna.co.kr/rss/economy.xml"),
     ("매일경제 증권", "https://www.mk.co.kr/rss/50200011/"),
@@ -251,7 +280,7 @@ def parse_feed(name, url, now, hours=NEWS_HOURS):
         if ts and (now - ts) > dt.timedelta(hours=hours):
             continue
         out.append({"title": title, "url": link, "source": source.strip(), "ts": ts,
-                    "person": name.startswith("인물-"), "alert": is_alert(title)})
+                    "person": name.startswith("인물-"), "holding": name.startswith("보유-"), "alert": is_alert(title)})
     out.sort(key=lambda x: x["ts"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
     return out[:PER_FEED]
 
@@ -276,8 +305,9 @@ def collect_news(now, failures):
                     seen.add(k)
                     cands.append(feed[i])
     alerts = [c for c in cands if c.get("alert")][:MAX_ALERTS * 2]
-    rest = [c for c in cands if not c.get("alert")]
-    return (alerts + rest)[:MAX_CANDIDATES]
+    held = [c for c in cands if c.get("holding") and not c.get("alert")][:70]
+    rest = [c for c in cands if not c.get("alert") and not (c.get("holding") and c in held)]
+    return (alerts + held + rest)[:MAX_CANDIDATES]
 
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
@@ -379,6 +409,8 @@ def build_prompt(cands, mkt):
             t += "[경보] "
         if c.get("person"):
             t += "[인물] "
+        if c.get("holding"):
+            t += "[보유] "
         return t
 
     lines = "\n".join(f"{i}|{tags(c)}{c['source']}|{c['title']}" for i, c in enumerate(cands, 1))
@@ -390,6 +422,7 @@ def build_prompt(cands, mkt):
    연예, 스포츠, 사건사고, 국내 정치 가십 등 관련 없는 기사는 버린다.
 2. 같은 사건을 다룬 기사는 하나만 고른다.
 3. category는 {", ".join(f'"{c}"' for c in CATEGORIES)} 중 하나다. 기준과 최대 개수는 아래와 같다.
+   - 보유(최대 6, 엄격하게): [보유] 표시가 붙은 기사 중 주가를 실제로 움직일 만한 주요 소식만. 해당 기업 CEO·주요 인사의 발언, 내부자·기관·유명 투자자의 눈에 띄는 매수·매도, EPS 추정치 상향·하향, 목표주가 변경, 실적·가이던스, 인수합병·대형 계약·규제·소송. 아래는 모두 제외한다: 단순 주가 등락 기사, "오를까?" 같은 전망 칼럼, 종목 추천·순위 모음, 투자 블로그성 글, 같은 내용의 반복 기사. 애매하면 고르지 않는다. 고른 기사는 level을 "high" 또는 "mid"로만 쓴다. title에 회사 이름을 꼭 넣는다. [보유] 기사는 다른 분류와 겹쳐도 "보유"로 분류한다.
    - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너·럽너(시타델 주식 전략 총괄), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
    - 테크(최대 4): 머스크, 젠슨 황, 피터 틸, 나발 라비칸트, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의, 올트먼 같은 빅테크·AI 수장의 발언과 주요 소식.
    - 대형주(최대 4): 엔비디아·애플·마이크로소프트·알파벳·아마존·메타·테슬라·브로드컴·TSMC 등 시가총액 상위 기업 개별 이슈(실적, 가이던스, 인수합병, 규제·소송, 대형 계약). 단순 주가 등락 기사는 제외.
@@ -450,6 +483,8 @@ def pick_with_ai(cands):
         cat = it.get("category") if it.get("category") in CATEGORIES else "월가"
         level = it.get("level") if it.get("level") in LEVEL_ORDER else "mid"
         title = clean_title(it.get("title") or src["title"])[:60]
+        if cat == "보유" and level == "low":
+            continue  # 보유 종목은 중요한 소식만
         if cat == "보고서" and not REPORT_MONTHS.get(dt.datetime.now(KST).month):
             cat = "이슈"  # 보고서 시기가 아닐 때는 일반 이슈로 보낸다 (엉뚱한 보고서 기사 방지)
             it = {k: v for k, v in it.items() if k != "implication"}
@@ -599,6 +634,7 @@ def manual_events(now, econ_titles):
 
 
 EARN_FAILED_DAYS = []
+HELD_NAMES = {h["symbol"].upper(): h["ko"] for h in HOLDINGS if re.fullmatch(r"[A-Za-z]{1,5}", h["symbol"])}
 
 
 def earnings_range(start, end):
@@ -627,7 +663,8 @@ def earnings_range(start, end):
         raw_count += len(rows)
         for e in rows:
             sym = e.get("symbol")
-            name = WATCH.get(sym)
+            held_name = HELD_NAMES.get(sym)
+            name = WATCH.get(sym) or held_name
             d = e.get("date") or ymd
             if not name or (name, d) in seen:
                 continue
@@ -638,6 +675,7 @@ def earnings_range(start, end):
                 "symbol": sym, "name": name, "ymd": d, "hour": hour,
                 "when": HOUR_LABEL.get(hour, "시간 미정"),
                 "eps_estimate": eps if isinstance(eps, (int, float)) else None,
+                "held": bool(held_name),
             })
     if ok_days == 0:
         raise SafeError("모든 날짜 조회 실패")
@@ -703,7 +741,7 @@ def month_preview(now):
     out = {"label": f"{first.month}월", "events": events, "earnings": [], "error": None}
     try:
         for e in earnings_range(f"{first:%Y-%m-%d}", f"{last:%Y-%m-%d}"):
-            if e["symbol"] in PREVIEW_EARN:
+            if e["symbol"] in PREVIEW_EARN or e.get("held"):
                 out["earnings"].append(e)
     except Exception as e:
         out["error"] = err_text(e)
@@ -740,6 +778,29 @@ def economist_cover(now):
     except Exception as e:
         out["error"] = err_text(e)
     return out
+
+
+def holdings_quotes():
+    """보유 종목의 전일 대비 등락률 (Yahoo Finance). 비트코인은 [시장]에 이미 있어서 뺀다."""
+    out, failed = [], 0
+    for h in HOLDINGS:
+        if h["symbol"].upper() in ("BTC", "BTC-USD"):
+            continue
+        time.sleep(0.2)
+        try:
+            r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{h['symbol']}",
+                             params={"range": "10d", "interval": "1d"}, headers=HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            res = r.json()["chart"]["result"][0]
+            pts = [(t, c) for t, c in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]) if c is not None]
+            if len(pts) < 2:
+                raise RuntimeError("기록이 부족함")
+            off = res.get("meta", {}).get("gmtoffset", 0)
+            day = (dt.datetime.fromtimestamp(pts[-1][0], dt.timezone.utc) + dt.timedelta(seconds=off)).strftime("%Y-%m-%d")
+            out.append({"name": h["ko"], "change": round((pts[-1][1] / pts[-2][1] - 1) * 100, 1), "date": day})
+        except Exception:
+            failed += 1
+    return out, failed
 
 
 # ---------------------------------------------------------------- 실행
@@ -786,6 +847,11 @@ def main():
     except Exception as e:
         failures.append({"name": "코인 공포탐욕(CMC)", "error": err_text(e)})
 
+    if HOLDINGS:
+        quotes, failed = holdings_quotes()
+        out["holdings"] = quotes
+        if failed:
+            failures.append({"name": "보유 종목 시세", "error": f"{failed}개 실패"})
     try:
         out["month_preview"] = month_preview(now)
     except Exception as e:
