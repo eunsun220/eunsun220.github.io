@@ -160,7 +160,22 @@ def news_blocks(extras):
 
 
 KIND_MARK = {"지표": "📊", "정책": "🏛", "발언": "🎤", "실적": "💼", "이벤트": "📌"}
-MAX_EARN_WEEK = 24  # 이번 주 칸에 보여줄 실적 발표 최대 개수 (너무 길어지지 않게)
+MAX_EARN_WEEK = 30  # 이번 주 칸에 보여줄 실적 발표 최대 개수 (너무 길어지지 않게)
+# 개수가 넘칠 때 먼저 남겨 둘 주요 기업 (나머지는 날짜순으로 채움)
+PRIORITY_EARN = {"NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "TSM", "AMD", "INTC", "MU",
+                 "ORCL", "PLTR", "NFLX", "CRM", "JPM", "GS", "WMT", "HD", "COST", "LLY", "UNH", "XOM", "BA",
+                 "COIN", "MSTR", "ASML", "QCOM", "ANET", "SMCI", "VRT", "CRDO", "ARM", "ALAB", "COHR",
+                 "CEG", "VST", "BE", "GLW"}
+
+
+def pick_earnings(earn, limit):
+    """넘치면 주요 기업을 먼저 남기고, 남는 자리를 날짜 빠른 순으로 채운다."""
+    if len(earn) <= limit:
+        return earn
+    top = [e for e in earn if e.get("symbol") in PRIORITY_EARN][:limit]
+    rest = [e for e in earn if e.get("symbol") not in PRIORITY_EARN][:limit - len(top)]
+    keep = {id(e) for e in top + rest}
+    return [e for e in earn if id(e) in keep]
 
 
 def ymd_label(ymd):
@@ -230,11 +245,11 @@ def week_block(extras):
     items = [(e["ymd"], e["time"], event_text(e, star=False)) for e in extras.get("week_events") or []]
     items += [(m["ymd"], "", event_text(m)) for m in extras.get("manual_events") or [] if m["ymd"] > today]
     earn = [e for e in extras.get("earnings") or [] if e["ymd"] > today]
-    items += [(e["ymd"], "", earn_text(e)) for e in earn[:MAX_EARN_WEEK]]
+    items += [(e["ymd"], "", earn_text(e)) for e in pick_earnings(earn, MAX_EARN_WEEK)]
     lines = ["<b>[이번 주·다음 주 체크]</b> 향후 10일, 중요 일정만 (지표·정책·발언은 한국시간, 실적은 미국 날짜)"]
     lines += group_lines(items)
     if len(earn) > MAX_EARN_WEEK:
-        lines.append(f"※ 실적 발표는 날짜순 {MAX_EARN_WEEK}개까지만 표시")
+        lines.append(f"※ 실적 발표가 많아 주요 기업 위주로 {MAX_EARN_WEEK}개까지만 표시")
     if len(lines) == 1:
         lines.append("• 확인된 일정이 없습니다.")
     return "\n".join(lines)
