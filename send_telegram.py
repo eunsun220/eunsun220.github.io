@@ -127,6 +127,15 @@ def holdings_block(extras):
         parts.append(f"{mark}{esc(h['name'])} {h['change']:+.1f}%")
     for i in range(0, len(parts), 4):
         lines.append(" ".join(parts[i:i + 4]))
+    for h in q:
+        if not h.get("big"):
+            continue
+        lines.append(f"\n⚠ {esc(h['name'])} {h['change']:+.1f}% 큰 변동 — 관련 기사")
+        for n in h.get("news") or []:
+            url = html.escape(n["url"], quote=True)
+            lines.append(f'• <a href="{url}">{esc(n["title"])}</a>')
+        if not h.get("news"):
+            lines.append("• 관련 기사를 찾지 못했습니다")
     return "\n".join(lines)
 
 
