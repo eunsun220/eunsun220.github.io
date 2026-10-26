@@ -249,6 +249,19 @@ def err_text(e):
     return type(e).__name__ + (f" (HTTP {code})" if code else "")
 
 
+def holding_match(title):
+    """기사 제목에 내 보유 종목 이름(또는 티커)이 실제로 들어 있는지. 검색에 딸려 온 엉뚱한 기사를 거른다."""
+    low = title.lower()
+    for h in HOLDINGS:
+        for name in (h["ko"], h["en"]):
+            if name and name.lower() in low:
+                return True
+        sym = h["symbol"]
+        if re.fullmatch(r"[A-Za-z]{3,5}", sym) and re.search(rf"\b{sym.upper()}\b", title):
+            return True
+    return False
+
+
 def norm(title):
     return re.sub(r"[^0-9A-Za-z가-힣]", "", title)[:18]
 
@@ -304,6 +317,9 @@ def collect_news(now, failures):
                 if k and k not in seen:
                     seen.add(k)
                     cands.append(feed[i])
+    for c in cands:
+        if c.get("holding") and not holding_match(c["title"]):
+            c["holding"] = False  # 제목에 종목 이름이 없으면 보유 종목 소식으로 치지 않는다
     alerts = [c for c in cands if c.get("alert")][:MAX_ALERTS * 2]
     held = [c for c in cands if c.get("holding") and not c.get("alert")][:70]
     rest = [c for c in cands if not c.get("alert") and not (c.get("holding") and c in held)]
@@ -422,7 +438,7 @@ def build_prompt(cands, mkt):
    연예, 스포츠, 사건사고, 국내 정치 가십 등 관련 없는 기사는 버린다.
 2. 같은 사건을 다룬 기사는 하나만 고른다.
 3. category는 {", ".join(f'"{c}"' for c in CATEGORIES)} 중 하나다. 기준과 최대 개수는 아래와 같다.
-   - 보유(최대 6, 엄격하게): [보유] 표시가 붙은 기사 중 주가를 실제로 움직일 만한 주요 소식만. 해당 기업 CEO·주요 인사의 발언, 내부자·기관·유명 투자자의 눈에 띄는 매수·매도, EPS 추정치 상향·하향, 목표주가 변경, 실적·가이던스, 인수합병·대형 계약·규제·소송. 아래는 모두 제외한다: 단순 주가 등락 기사, "오를까?" 같은 전망 칼럼, 종목 추천·순위 모음, 투자 블로그성 글, 같은 내용의 반복 기사. 애매하면 고르지 않는다. 고른 기사는 level을 "high" 또는 "mid"로만 쓴다. title에 회사 이름을 꼭 넣는다. [보유] 기사는 다른 분류와 겹쳐도 "보유"로 분류한다.
+   - 보유(최대 6, 엄격하게): [보유] 표시가 붙은 기사 중 주가를 실제로 움직일 만한 주요 소식만. 해당 기업 CEO·주요 인사의 발언, 내부자·기관·유명 투자자의 눈에 띄는 매수·매도, EPS 추정치 상향·하향, 목표주가 변경, 실적·가이던스, 인수합병·대형 계약·규제·소송. 아래는 모두 제외한다: 단순 주가 등락 기사, "오를까?" 같은 전망 칼럼, 종목 추천·순위 모음, 투자 블로그성 글, 같은 내용의 반복 기사. 애매하면 고르지 않는다. 고른 기사는 level을 "high" 또는 "mid"로만 쓴다. title에 회사 이름을 꼭 넣는다. [보유] 기사는 다른 분류와 겹쳐도 "보유"로 분류하고, 같은 사건을 월가·테크·대형주 등 다른 분류에 또 넣지 않는다. 제목에 해당 기업 이름이 없는 기사는 [보유] 표시가 있어도 "보유"로 분류하지 않는다.
    - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너·럽너(시타델 주식 전략 총괄), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
    - 테크(최대 4): 머스크, 젠슨 황, 피터 틸, 나발 라비칸트, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의, 올트먼 같은 빅테크·AI 수장의 발언과 주요 소식.
    - 대형주(최대 4): 엔비디아·애플·마이크로소프트·알파벳·아마존·메타·테슬라·브로드컴·TSMC 등 시가총액 상위 기업 개별 이슈(실적, 가이던스, 인수합병, 규제·소송, 대형 계약). 단순 주가 등락 기사는 제외.
@@ -780,7 +796,17 @@ def economist_cover(now):
     return out
 
 
-def holdings_quotes():
+BIG_MOVE = 5.0  # 전일 대비 이 % 이상 움직인 보유 종목은 원인을 찾을 수 있게 관련 기사도 붙인다
+
+
+def mover_news(h, now):
+    terms = [f'"{h["ko"]}"'] + ([f'"{h["en"]}"'] if h["en"] else [])
+    url = gnews("(" + " OR ".join(terms) + ")", "ko", days=3)
+    items = [i for i in parse_feed("보유-변동", url, now, 72) if holding_match(i["title"])][:2]
+    return [{"title": clip(i["title"], 70), "url": i["url"]} for i in items]
+
+
+def holdings_quotes(now):
     """보유 종목의 전일 대비 등락률 (Yahoo Finance). 비트코인은 [시장]에 이미 있어서 뺀다."""
     out, failed = [], 0
     for h in HOLDINGS:
@@ -797,7 +823,15 @@ def holdings_quotes():
                 raise RuntimeError("기록이 부족함")
             off = res.get("meta", {}).get("gmtoffset", 0)
             day = (dt.datetime.fromtimestamp(pts[-1][0], dt.timezone.utc) + dt.timedelta(seconds=off)).strftime("%Y-%m-%d")
-            out.append({"name": h["ko"], "change": round((pts[-1][1] / pts[-2][1] - 1) * 100, 1), "date": day})
+            chg = round((pts[-1][1] / pts[-2][1] - 1) * 100, 1)
+            row = {"name": h["ko"], "change": chg, "date": day}
+            if abs(chg) >= BIG_MOVE:
+                row["big"] = True
+                try:
+                    row["news"] = mover_news(h, now)
+                except Exception:
+                    row["news"] = []
+            out.append(row)
         except Exception:
             failed += 1
     return out, failed
@@ -848,7 +882,7 @@ def main():
         failures.append({"name": "코인 공포탐욕(CMC)", "error": err_text(e)})
 
     if HOLDINGS:
-        quotes, failed = holdings_quotes()
+        quotes, failed = holdings_quotes(now)
         out["holdings"] = quotes
         if failed:
             failures.append({"name": "보유 종목 시세", "error": f"{failed}개 실패"})
