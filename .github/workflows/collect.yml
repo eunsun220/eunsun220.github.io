@@ -51,6 +51,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
+          HOLDINGS: ${{ secrets.HOLDINGS }}
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python extras.py
 
@@ -68,14 +69,3 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python send_telegram.py
-
-      - name: 결과 파일 보관
-        if: ${{ github.event.inputs.test_only != 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: data
-          path: |
-            data.json
-            extras.json
-            weekly.json
-          if-no-files-found: ignore
