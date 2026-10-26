@@ -28,7 +28,7 @@ RATING_KO = {
     "extreme fear": "극단적 공포", "fear": "공포", "neutral": "중립",
     "greed": "탐욕", "extreme greed": "극단적 탐욕",
 }
-NEWS_ORDER = ["월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서", "주요 뉴스"]
+NEWS_ORDER = ["보유", "월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서", "주요 뉴스"]
 
 
 def esc(s):
@@ -116,6 +116,20 @@ def fear_greed_lines(rows, extras):
     return out
 
 
+def holdings_block(extras):
+    q = (extras or {}).get("holdings")
+    if not q:
+        return None
+    lines = ["<b>[내 보유 종목]</b> 전일 대비 (한국 종목은 한국 장 기준)"]
+    parts = []
+    for h in q:
+        mark = "🟢" if h["change"] > 0 else ("🔴" if h["change"] < 0 else "⚪")
+        parts.append(f"{mark}{esc(h['name'])} {h['change']:+.1f}%")
+    for i in range(0, len(parts), 4):
+        lines.append(" ".join(parts[i:i + 4]))
+    return "\n".join(lines)
+
+
 def alert_block(extras):
     """대사관 인력 철수·자국민 대피·여행경보 같은 안전 신호. 없으면 '없음'이라고 알려준다."""
     news = (extras or {}).get("news")
@@ -153,6 +167,8 @@ def news_blocks(extras):
             lines.append(f'{mark} <a href="{url}">{esc(it["title"])}</a>')
             if it.get("implication"):
                 lines.append("   ↳ " + esc(it["implication"]))
+    if (extras or {}).get("holdings") and "보유" not in by_cat:
+        lines.insert(1, "\n<b>보유</b>\n• 보유 종목 관련 새 주요 소식 없음")
     if news.get("mode") == "raw":
         lines.append("\n※ AI 선별이 안 돼 제목만 모았습니다.")
     blocks.append("\n".join(lines))
@@ -172,8 +188,11 @@ def pick_earnings(earn, limit):
     """넘치면 주요 기업을 먼저 남기고, 남는 자리를 날짜 빠른 순으로 채운다."""
     if len(earn) <= limit:
         return earn
-    top = [e for e in earn if e.get("symbol") in PRIORITY_EARN][:limit]
-    rest = [e for e in earn if e.get("symbol") not in PRIORITY_EARN][:limit - len(top)]
+    def is_top(e):
+        return e.get("symbol") in PRIORITY_EARN or e.get("held")
+
+    top = [e for e in earn if is_top(e)][:limit]
+    rest = [e for e in earn if not is_top(e)][:limit - len(top)]
     keep = {id(e) for e in top + rest}
     return [e for e in earn if id(e) in keep]
 
@@ -205,6 +224,8 @@ def earn_text(e):
     text = f"{KIND_MARK['실적']} {esc(e['name'])} 실적 · {esc(e['when'])}"
     if e.get("eps_estimate") is not None:
         text += f" · 예상 EPS {e['eps_estimate']:.2f}"
+    if e.get("held"):
+        text += " ⭐보유"
     return text
 
 
@@ -329,6 +350,9 @@ def build_blocks(data, extras, weekly=None):
     if len(nb) == 2:
         blocks.append(nb[0])
 
+    hb = holdings_block(extras)
+    if hb:
+        blocks.append(hb)
     fg = fear_greed_lines(rows, extras)
     if fg:
         blocks.append("<b>[시장 심리]</b>\n" + "\n".join(fg))
