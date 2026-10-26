@@ -144,7 +144,7 @@ def all_feeds(now):
 
 # 안전 신호: 대사관·자국민·여행경보 + 철수·감축·대피 같은 말이 함께 나온 제목
 ALERT_WHO = re.compile(
-    r"대사관|영사관|자국민|교민|미국인|미 국민|외교관|외교 인력|embassy|consulate|nationals|Americans|diplomats|"
+    r"대사관|영사관|공관|자국민|교민|미국인|미 국민|외교관|외교 인력|비필수 인력|embassy|consulate|nationals|Americans|diplomats|"
     r"여행경보|여행 경보|travel advisory|여행금지", re.I)
 ALERT_WHAT = re.compile(
     r"철수|감축|대피|철군|출국|퇴거|이동 명령|이동시|권고|폐쇄|상향|evacuat|ordered departure|depart|reduc|withdraw|"
@@ -396,6 +396,7 @@ def build_prompt(cands, mkt):
    - 이슈(최대 3): 요즘 시장의 쟁점. AI 자금조달 우려(데이터센터 투자·부채·오픈AI 자금), 사이버 보안 사고·보안주, 그 밖의 시장을 흔드는 이슈. title 맨 앞에 [AI자금] [보안] [기타] 중 하나를 붙인다.
    - 금(최대 2): 금값 급변, 중앙은행(특히 중국)의 금 매입, 금광주·금 관련 정책 소식.
    - 지정학: 전쟁, 외교, 제재 등. 소음이 많으니 일반 소식은 최대 2개만 고른다. 단 [경보] 기사는 개수와 상관없이 모두 고르고 category는 "지정학", level은 "high"로 한다.
+     [경보] 표시가 없어도 대사관·공관·외교관 철수·감축·퇴거, 자국민(미국인 포함) 대피·출국 명령, 여행경보 상향 소식이면 그 항목에 "safety": true를 쓴다. 같은 사건의 [경보] 기사가 여럿이면 한국어 기사 하나만 고른다.
    - 정치(최대 3): 트럼프의 발언, 상무·재무장관 등 정책 당국자 발언, 중간선거와 관세 등 정책 소식.
    - 코인(최대 3): 비트코인·이더리움·ETF·규제 소식.
    - 보고서(최대 3): 오직 세계경제포럼(다보스)·글로벌 리스크 보고서, 국방수권법(NDAA), ARK Big Ideas 기사일 때만 쓴다. 다른 기관의 보고서나 업종 전망은 보고서로 분류하지 않는다. 이 분류의 기사에는 implication 항목도 쓴다: 제목만 보고 추정한 시장 시사점 한 문장. 반드시 "추정:"으로 시작하고, 제목에 없는 내용은 만들지 않는다.
@@ -406,7 +407,7 @@ def build_prompt(cands, mkt):
 6. summary는 고른 기사와 아래 시장 숫자만 근거로 밤사이 분위기를 한국어 2문장 이내로 쓴다.
    원인을 단정하지 말고, 근거가 부족하면 "원인은 불명확"이라고 쓴다. 투자를 권유하는 표현은 쓰지 않는다.
 
-JSON만 출력한다. 형식: {{"summary": "...", "items": [{{"id": 번호, "category": "...", "title": "...", "level": "...", "implication": "(보고서 분류에만)"}}]}}
+JSON만 출력한다. 형식: {{"summary": "...", "items": [{{"id": 번호, "category": "...", "title": "...", "level": "...", "implication": "(보고서 분류에만)", "safety": true(해당할 때만)}}]}}
 
 [시장 숫자]
 {mkt}
@@ -453,7 +454,7 @@ def pick_with_ai(cands):
             cat = "이슈"  # 보고서 시기가 아닐 때는 일반 이슈로 보낸다 (엉뚱한 보고서 기사 방지)
             it = {k: v for k, v in it.items() if k != "implication"}
         row = {"category": cat, "title": title, "url": src["url"], "source": src["source"], "level": level}
-        if src.get("alert"):  # 안전 신호는 분류·중요도를 코드가 고정한다
+        if src.get("alert") or it.get("safety") is True:  # 안전 신호는 분류·중요도를 코드가 고정한다
             row.update({"category": "지정학", "level": "high", "alert": True})
         if cat == "보고서" and it.get("implication"):
             row["implication"] = str(it["implication"]).strip()[:120]
@@ -597,31 +598,50 @@ def manual_events(now, econ_titles):
     return out
 
 
+EARN_FAILED_DAYS = []
+
+
 def earnings_range(start, end):
+    """Finnhub 실적 일정. 여러 날을 한꺼번에 받으면 일부 날짜가 빠지는 일이 있어 하루씩 조회한다."""
     key = os.environ.get("FINNHUB_API_KEY", "").strip()
     if not key:
         raise RuntimeError("FINNHUB_API_KEY 없음")
-    r = requests.get(
-        "https://finnhub.io/api/v1/calendar/earnings",
-        params={"from": start, "to": end, "token": key},
-        timeout=TIMEOUT,
-    )
-    r.raise_for_status()
-    out, seen = [], set()
-    for e in r.json().get("earningsCalendar", []) or []:
-        sym = e.get("symbol")
-        name = WATCH.get(sym)
-        day = e.get("date")
-        if not name or not day or (name, day) in seen:
+    EARN_FAILED_DAYS.clear()
+    d0 = dt.datetime.strptime(start, "%Y-%m-%d").date()
+    d1 = dt.datetime.strptime(end, "%Y-%m-%d").date()
+    out, seen, ok_days, raw_count = [], set(), 0, 0
+    day = d0
+    while day <= d1:
+        ymd = f"{day:%Y-%m-%d}"
+        day += dt.timedelta(days=1)
+        time.sleep(0.2)
+        try:
+            r = requests.get("https://finnhub.io/api/v1/calendar/earnings",
+                             params={"from": ymd, "to": ymd, "token": key}, timeout=TIMEOUT)
+            r.raise_for_status()
+            rows = r.json().get("earningsCalendar", []) or []
+        except Exception:
+            EARN_FAILED_DAYS.append(ymd[5:])
             continue
-        seen.add((name, day))
-        hour = e.get("hour") or ""
-        eps = e.get("epsEstimate")
-        out.append({
-            "symbol": sym, "name": name, "ymd": day, "hour": hour,
-            "when": HOUR_LABEL.get(hour, "시간 미정"),
-            "eps_estimate": eps if isinstance(eps, (int, float)) else None,
-        })
+        ok_days += 1
+        raw_count += len(rows)
+        for e in rows:
+            sym = e.get("symbol")
+            name = WATCH.get(sym)
+            d = e.get("date") or ymd
+            if not name or (name, d) in seen:
+                continue
+            seen.add((name, d))
+            hour = e.get("hour") or ""
+            eps = e.get("epsEstimate")
+            out.append({
+                "symbol": sym, "name": name, "ymd": d, "hour": hour,
+                "when": HOUR_LABEL.get(hour, "시간 미정"),
+                "eps_estimate": eps if isinstance(eps, (int, float)) else None,
+            })
+    if ok_days == 0:
+        raise SafeError("모든 날짜 조회 실패")
+    print(f"실적 일정: {ok_days}일 조회, 전체 {raw_count}건 중 주요 기업 {len(out)}건")
     out.sort(key=lambda x: (x["ymd"], HOUR_ORDER.get(x["hour"], 3), x["name"]))
     return out
 
@@ -756,6 +776,8 @@ def main():
 
     try:
         out["earnings"] = earnings_range(f"{now:%Y-%m-%d}", f"{now + dt.timedelta(days=10):%Y-%m-%d}")
+        if EARN_FAILED_DAYS:
+            failures.append({"name": "실적 일정(일부 날짜)", "error": ",".join(EARN_FAILED_DAYS)})
     except Exception as e:
         failures.append({"name": "실적 일정", "error": err_text(e)})
 
