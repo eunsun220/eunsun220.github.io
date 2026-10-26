@@ -61,7 +61,7 @@ def names_query(names):
 # ---- 발언을 챙겨볼 사람들 (여기 이름만 고치면 됩니다) ----
 # 월가: 유명 투자자·애널리스트 / 테크: 빅테크·AI 수장 / 정치: 정책 결정자
 PEOPLE_WALLST_KO = ["워런 버핏", "하워드 막스", "폴 튜더 존스", "켄 그리핀", "프레드 윌슨",
-                    "스콧 루브너", "스콧 러브너", "레오폴드 아셴브레너", "댄 아이브스", "드러켄밀러",
+                    "스콧 루브너", "스콧 러브너", "스콧 럽너", "레오폴드 아셴브레너", "댄 아이브스", "드러켄밀러",
                     "빌 애크먼", "빌 에크먼", "마크 미너비니", "마크 미네르비니", "레이 달리오",
                     "마이클 버리", "제이미 다이먼", "래리 핑크", "제프리 건들락", "톰 리", "모건스탠리 전망"]
 PEOPLE_WALLST_EN = ["Warren Buffett", "Howard Marks", "Paul Tudor Jones", "Ken Griffin", "Fred Wilson",
@@ -69,9 +69,9 @@ PEOPLE_WALLST_EN = ["Warren Buffett", "Howard Marks", "Paul Tudor Jones", "Ken G
                     "Bill Ackman", "Mark Minervini", "Ray Dalio", "Michael Burry", "Jamie Dimon",
                     "Larry Fink", "Jeffrey Gundlach", "Tom Lee", "Morgan Stanley Wilson"]
 PEOPLE_TECH_KO = ["일론 머스크", "젠슨 황", "샘 올트먼", "다리오 아모데이", "순다르 피차이", "손정의",
-                  "마크 저커버그", "사티아 나델라", "팀 쿡", "리사 수", "피터 틸"]
+                  "마크 저커버그", "사티아 나델라", "팀 쿡", "리사 수", "피터 틸", "나발 라비칸트"]
 PEOPLE_TECH_EN = ["Elon Musk", "Jensen Huang", "Sam Altman", "Dario Amodei", "Sundar Pichai",
-                  "Masayoshi Son", "Mark Zuckerberg", "Satya Nadella", "Tim Cook", "Lisa Su", "Peter Thiel"]
+                  "Masayoshi Son", "Mark Zuckerberg", "Satya Nadella", "Tim Cook", "Lisa Su", "Peter Thiel", "Naval Ravikant"]
 PEOPLE_POLICY_KO = ["트럼프", "베선트", "러트닉 상무장관", "파월"]
 PEOPLE_POLICY_EN = ["Trump", "Bessent", "Lutnick", "Powell"]
 
@@ -390,8 +390,8 @@ def build_prompt(cands, mkt):
    연예, 스포츠, 사건사고, 국내 정치 가십 등 관련 없는 기사는 버린다.
 2. 같은 사건을 다룬 기사는 하나만 고른다.
 3. category는 {", ".join(f'"{c}"' for c in CATEGORIES)} 중 하나다. 기준과 최대 개수는 아래와 같다.
-   - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너(시타델), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
-   - 테크(최대 4): 머스크, 젠슨 황, 피터 틸, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의, 올트먼 같은 빅테크·AI 수장의 발언과 주요 소식.
+   - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너·럽너(시타델 주식 전략 총괄), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
+   - 테크(최대 4): 머스크, 젠슨 황, 피터 틸, 나발 라비칸트, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의, 올트먼 같은 빅테크·AI 수장의 발언과 주요 소식.
    - 대형주(최대 4): 엔비디아·애플·마이크로소프트·알파벳·아마존·메타·테슬라·브로드컴·TSMC 등 시가총액 상위 기업 개별 이슈(실적, 가이던스, 인수합병, 규제·소송, 대형 계약). 단순 주가 등락 기사는 제외.
    - 이슈(최대 3): 요즘 시장의 쟁점. AI 자금조달 우려(데이터센터 투자·부채·오픈AI 자금), 사이버 보안 사고·보안주, 그 밖의 시장을 흔드는 이슈. title 맨 앞에 [AI자금] [보안] [기타] 중 하나를 붙인다.
    - 금(최대 2): 금값 급변, 중앙은행(특히 중국)의 금 매입, 금광주·금 관련 정책 소식.
