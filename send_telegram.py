@@ -120,7 +120,13 @@ def holdings_block(extras):
     q = (extras or {}).get("holdings")
     if not q:
         return None
-    lines = ["<b>[내 보유 종목]</b> 전일 대비 (한국 종목은 한국 장 기준)"]
+    def asof(kr):
+        ds = sorted({h["date"] for h in q if bool(h.get("kr")) == kr})
+        return f"{ds[-1][5:7]}/{ds[-1][8:10]}" if ds else ""
+
+    us, kr = asof(False), asof(True)
+    basis = " · ".join(x for x in (f"미국 {us} 종가" if us else "", f"한국 {kr} 종가" if kr else "") if x)
+    lines = [f"<b>[내 보유 종목]</b> 직전 거래일 대비 ({esc(basis)} 기준)"]
     parts = []
     for h in q:
         mark = "🟢" if h["change"] > 0 else ("🔴" if h["change"] < 0 else "⚪")
