@@ -13,7 +13,7 @@ on:
         required: false
         default: "false"
       force_sections:
-        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, cover, monthend, monthly). 비워 두면 평소대로"
+        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, ma, cover, monthend, monthly). 비워 두면 평소대로"
         required: false
         default: ""
 
@@ -62,6 +62,14 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python weekly.py
+
+      - name: 토요일 이동평균선 점검
+        if: ${{ github.event.inputs.test_only != 'true' }}
+        continue-on-error: true
+        env:
+          HOLDINGS: ${{ secrets.HOLDINGS }}
+          FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
+        run: python ma_signals.py
 
       - name: 텔레그램으로 보내기
         if: ${{ github.event.inputs.test_only != 'true' }}
