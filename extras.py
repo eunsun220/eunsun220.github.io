@@ -39,11 +39,12 @@ HEADERS = {"User-Agent": BROWSER_UA}
 
 NEWS_HOURS = 20          # 이 시간 안에 나온 기사만
 PER_FEED = 10            # 목록마다 최대 몇 개까지 후보로 쓸지
-MAX_CANDIDATES = 220     # AI에게 보여줄 최대 기사 수
-MAX_PICK = 24            # 화면에 보여줄 최대 기사 수
+MAX_CANDIDATES = 280     # AI에게 보여줄 최대 기사 수
+MAX_PICK = 38            # 화면에 보여줄 최대 기사 수
 MAX_ALERTS = 5           # 안전 신호(대사관 철수 등)는 최대 이만큼 무조건 보여준다
-CATEGORIES = ["보유", "월가", "테크", "대형주", "이슈", "금", "지정학", "정치", "코인", "보고서"]
-GNEWS_PREFIXES = ("구글뉴스", "보유-", "인물-", "대형주-", "금-", "이슈-", "경보-", "보고서-", "표지-")
+CATEGORIES = ["보유", "월가", "테크", "대형주", "AI", "피지컬AI", "상장·공급", "이슈", "금", "지정학", "정치", "코인", "보고서"]
+IMPL_CATS = ("보고서", "상장·공급")   # 이 분류는 '추정:' 한 줄 해설을 붙인다
+GNEWS_PREFIXES = ("구글뉴스", "보유-", "인물-", "대형주-", "금-", "이슈-", "경보-", "보고서-", "표지-", "공급-", "AI-")
 LEVEL_ORDER = {"high": 0, "mid": 1, "low": 2}
 
 
@@ -123,18 +124,46 @@ _en_names = [f'"{h["en"]}"' for h in HOLDINGS if h["en"]]
 for i, grp in enumerate(chunks(_en_names, 4), 1):
     HOLD_FEEDS.append((f"보유-영문{i}", gnews("(" + " OR ".join(grp) + ") " + HOLD_EN, "en")))
 
-# 시가총액 상위 대형주 (이름만 고치면 됩니다)
-MEGA_KO = ["엔비디아", "애플", "마이크로소프트", "구글 알파벳", "아마존", "메타", "테슬라", "브로드컴", "TSMC",
-           "AMD", "인텔", "마이크론", "SK하이닉스", "팔란티어", "오라클", "넷플릭스", "JP모건", "일라이릴리",
-           "비자", "월마트", "엑슨모빌", "록히드마틴", "ASML", "퀄컴", "스페이스X"]
-MEGA_EN = ["Nvidia", "Apple", "Microsoft", "Alphabet Google", "Amazon", "Meta", "Tesla", "Broadcom", "TSMC",
-           "AMD", "Intel", "Micron", "SK Hynix", "Palantir", "Oracle", "Netflix", "JPMorgan", "Eli Lilly",
-           "Visa", "Walmart", "Exxon", "Lockheed", "ASML", "Qualcomm", "SpaceX"]
+# 시가총액 상위 대형주 — 앞쪽 15개가 미국 시총 상위권, 뒤쪽은 반도체·AI 관련 주요 기업 (이름만 고치면 됩니다)
+MEGA_KO = ["엔비디아", "마이크로소프트", "애플", "구글 알파벳", "아마존", "메타", "브로드컴", "테슬라", "TSMC",
+           "버크셔 해서웨이", "JP모건", "일라이릴리", "오라클", "비자", "월마트",
+           "AMD", "인텔", "마이크론", "SK하이닉스", "팔란티어", "넷플릭스", "ASML", "퀄컴", "스페이스X"]
+MEGA_EN = ["Nvidia", "Microsoft", "Apple", "Alphabet Google", "Amazon", "Meta", "Broadcom", "Tesla", "TSMC",
+           "Berkshire Hathaway", "JPMorgan", "Eli Lilly", "Oracle", "Visa", "Walmart",
+           "AMD", "Intel", "Micron", "SK Hynix", "Palantir", "Netflix", "ASML", "Qualcomm", "SpaceX"]
+MEGA_KO_WORDS = "(실적 OR 인수 OR 소송 OR 규제 OR 가이던스 OR 계약 OR 증자 OR 감원 OR 구조조정 OR 투자 OR CEO)"
+MEGA_EN_WORDS = ("(earnings OR guidance OR acquisition OR lawsuit OR probe OR deal OR layoffs OR "
+                 '"stock offering" OR "capital raise" OR investment OR CEO)')
 MEGA_FEEDS = []
-for i, grp in enumerate(chunks(MEGA_KO, 5), 1):
-    MEGA_FEEDS.append((f"대형주-{i}", gnews("(" + names_query(grp) + ") (실적 OR 인수 OR 소송 OR 규제 OR 가이던스 OR 계약)")))
-for i, grp in enumerate(chunks(MEGA_EN, 5), 1):
-    MEGA_FEEDS.append((f"대형주-영문{i}", gnews("(" + names_query(grp) + ") (earnings OR guidance OR acquisition OR lawsuit OR probe OR deal)", "en")))
+for i, grp in enumerate(chunks(MEGA_KO, 4), 1):
+    MEGA_FEEDS.append((f"대형주-{i}", gnews("(" + names_query(grp) + ") " + MEGA_KO_WORDS)))
+for i, grp in enumerate(chunks(MEGA_EN, 4), 1):
+    MEGA_FEEDS.append((f"대형주-영문{i}", gnews("(" + names_query(grp) + ") " + MEGA_EN_WORDS, "en")))
+
+# 대규모 상장(IPO)·빅테크 증자·보호예수 해제 = '주식 공급물량' 소식, 그리고 AI 업계 주요 소식
+SUPPLY_FEEDS = [
+    ("공급-상장", gnews("앤트로픽 상장 OR 오픈AI 상장 OR 스페이스X 상장 OR 대형 IPO OR 기업공개 신고서 OR 공모 규모")),
+    ("공급-상장(영문)", gnews('(Anthropic OR OpenAI OR SpaceX OR xAI OR Databricks OR Stripe) (IPO OR "S-1" OR "go public" OR listing OR valuation)', "en")),
+    ("공급-증자", gnews("빅테크 유상증자 OR 주식 발행 OR 전환사채 AI 투자 재원 OR 메타 증자 OR 오라클 증자")),
+    ("공급-증자(영문)", gnews('("stock offering" OR "share sale" OR "convertible notes" OR "equity raise" OR "bond sale") (Meta OR Oracle OR CoreWeave OR Alphabet OR Amazon OR Microsoft) AI', "en")),
+    ("공급-보호예수", gnews("보호예수 해제 OR 락업 해제 OR 락업 만료 대형 상장 OR 주식 공급 과잉 OR IPO 물량")),
+    ("공급-보호예수(영문)", gnews('"lockup expiration" OR "lock-up expires" OR "IPO supply" OR "equity supply" OR "record IPO"', "en")),
+]
+AI_FEEDS = [
+    ("AI-한국어", gnews("오픈AI OR 앤트로픽 OR xAI OR 제미나이 OR GPT 신모델 OR AI 컴퓨팅 계약 OR AI 데이터센터 계약 OR AI 반도체 수출")),
+    ("AI-영문", gnews('(OpenAI OR Anthropic OR xAI OR "Google Gemini" OR "Meta AI") (launch OR release OR deal OR "compute" OR revenue OR funding)', "en")),
+    ("AI-규제", gnews("AI 규제 OR AI 반도체 수출 규제 OR 엔비디아 중국 수출 OR AI 칩 관세")),
+    # 주요 AI 기업별 (신모델·제품 공개·사업 진출)
+    ("AI-앤트로픽", gnews("앤트로픽 OR 클로드 신모델 OR 아모데이")),
+    ("AI-오픈AI", gnews("오픈AI OR 챗GPT OR GPT 신모델 OR 올트먼 에이전트")),
+    ("AI-구글", gnews("구글 제미나이 신모델 OR 딥마인드 OR 피차이 AI")),
+    ("AI-메타", gnews("메타 AI 신모델 OR 저커버그 AI OR 메타 초지능")),
+    ("AI-xAI", gnews("xAI 그록 OR 머스크 AI OR 스페이스X xAI")),
+    ("AI-기업영문", gnews('(Anthropic OR OpenAI OR "Google DeepMind" OR "Meta Superintelligence" OR xAI OR Grok) (model OR agent OR launch OR enterprise OR IPO)', "en")),
+    # 피지컬 AI (로봇·휴머노이드·자율주행)
+    ("AI-피지컬", gnews("피지컬 AI OR 휴머노이드 로봇 OR 옵티머스 OR 로보택시 OR 자율주행 로봇")),
+    ("AI-피지컬(영문)", gnews('"physical AI" OR humanoid robot OR Optimus OR "Figure AI" OR Waymo OR robotaxi OR "Nvidia robotics" OR "Boston Dynamics"', "en")),
+]
 
 TOPIC_FEEDS = [
     # 지켜보는 안전 신호: 대사관 인력 철수, 자국민 대피, 여행경보
@@ -184,7 +213,7 @@ def is_alert(title):
     return bool(ALERT_WHO.search(title) and ALERT_WHAT.search(title))
 
 
-FEEDS = HOLD_FEEDS + PEOPLE_FEEDS + MEGA_FEEDS + TOPIC_FEEDS + [
+FEEDS = HOLD_FEEDS + PEOPLE_FEEDS + MEGA_FEEDS + SUPPLY_FEEDS + AI_FEEDS + TOPIC_FEEDS + [
     ("연합뉴스 국제", "https://www.yna.co.kr/rss/international.xml"),
     ("연합뉴스 경제", "https://www.yna.co.kr/rss/economy.xml"),
     ("매일경제 증권", "https://www.mk.co.kr/rss/50200011/"),
@@ -293,7 +322,8 @@ def parse_feed(name, url, now, hours=NEWS_HOURS):
         if ts and (now - ts) > dt.timedelta(hours=hours):
             continue
         out.append({"title": title, "url": link, "source": source.strip(), "ts": ts,
-                    "person": name.startswith("인물-"), "holding": name.startswith("보유-"), "alert": is_alert(title)})
+                    "person": name.startswith("인물-"), "holding": name.startswith("보유-"), "alert": is_alert(title),
+                    "topic": name.startswith(("공급-", "AI-"))})
     out.sort(key=lambda x: x["ts"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
     return out[:PER_FEED]
 
@@ -322,8 +352,9 @@ def collect_news(now, failures):
             c["holding"] = False  # 제목에 종목 이름이 없으면 보유 종목 소식으로 치지 않는다
     alerts = [c for c in cands if c.get("alert")][:MAX_ALERTS * 2]
     held = [c for c in cands if c.get("holding") and not c.get("alert")][:70]
-    rest = [c for c in cands if not c.get("alert") and not (c.get("holding") and c in held)]
-    return (alerts + held + rest)[:MAX_CANDIDATES]
+    topics = [c for c in cands if c.get("topic") and not c.get("alert") and c not in held][:70]
+    rest = [c for c in cands if not c.get("alert") and not (c.get("holding") and c in held) and c not in topics]
+    return (alerts + held + topics + rest)[:MAX_CANDIDATES]
 
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
@@ -441,7 +472,10 @@ def build_prompt(cands, mkt):
    - 보유(최대 6, 엄격하게): [보유] 표시가 붙은 기사 중 주가를 실제로 움직일 만한 주요 소식만. 해당 기업 CEO·주요 인사의 발언, 내부자·기관·유명 투자자의 눈에 띄는 매수·매도, EPS 추정치 상향·하향, 목표주가 변경, 실적·가이던스, 인수합병·대형 계약·규제·소송. 아래는 모두 제외한다: 단순 주가 등락 기사, "오를까?" 같은 전망 칼럼, 종목 추천·순위 모음, 투자 블로그성 글, 같은 내용의 반복 기사. 애매하면 고르지 않는다. 고른 기사는 level을 "high" 또는 "mid"로만 쓴다. title에 회사 이름을 꼭 넣는다. [보유] 기사는 다른 분류와 겹쳐도 "보유"로 분류하고, 같은 사건을 월가·테크·대형주 등 다른 분류에 또 넣지 않는다. 제목에 해당 기업 이름이 없는 기사는 [보유] 표시가 있어도 "보유"로 분류하지 않는다.
    - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너·럽너(시타델 주식 전략 총괄), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
    - 테크(최대 4): 머스크, 젠슨 황, 피터 틸, 나발 라비칸트, 앤트로픽 CEO(아모데이), 구글 CEO(피차이), 소프트뱅크 손정의, 올트먼 같은 빅테크·AI 수장의 발언과 주요 소식.
-   - 대형주(최대 4): 엔비디아·애플·마이크로소프트·알파벳·아마존·메타·테슬라·브로드컴·TSMC 등 시가총액 상위 기업 개별 이슈(실적, 가이던스, 인수합병, 규제·소송, 대형 계약). 단순 주가 등락 기사는 제외.
+   - 대형주(최대 6): 미국 시가총액 상위 약 15개(엔비디아·마이크로소프트·애플·알파벳·아마존·메타·브로드컴·테슬라·TSMC·버크셔·JP모건·일라이릴리·오라클·비자·월마트)와 AMD·인텔·팔란티어 등 주요 기업의 개별 이슈(실적, 가이던스, 인수합병, 규제·소송, 대형 계약, 대규모 감원·구조조정, 대규모 투자). 단순 주가 등락 기사는 제외. 주식 발행·증자 소식은 "상장·공급"으로 보낸다.
+   - AI(최대 6): 오픈AI·앤트로픽·구글(제미나이·딥마인드)·메타·xAI(머스크) 등 AI 업계의 주요 소식(신모델·신제품·에이전트 공개, 기업용 사업 진출, 대형 컴퓨팅·클라우드 계약, 매출·투자 유치, AI 반도체·AI 규제·안전 정책). 이 다섯 회사 소식은 시장 영향이 있으면 우선한다. 이 회사들이 아니어도 시장이 꼭 알아야 할 중요한 AI 이슈(전력·데이터센터 병목, 대규모 규제, 중국 AI 동향 등)는 포함한다. AI 자금조달 우려·부채 경고는 "이슈", 상장 소식은 "상장·공급", 빅테크 수장의 발언은 "테크"로 보내고 겹치게 넣지 않는다. 시장에 큰 영향이 없는 제품 소개·사용법 기사는 제외.
+   - 피지컬AI(최대 3): 로봇·휴머노이드·자율주행·로보택시(테슬라 옵티머스, 웨이모, 피겨, 보스턴다이내믹스, 엔비디아 로보틱스 등)의 주요 소식(양산·상용화·대형 계약·투자·규제).
+   - 상장·공급(최대 5): 주식 시장에 풀리는 물량 소식. (1) 앤트로픽·오픈AI·스페이스X 등 초대형 기업의 상장(IPO) 신고·일정·공모 규모·기업가치, (2) 메타·오라클 등 빅테크의 유상증자·주식 또는 전환사채 발행(AI 투자 재원 마련), (3) 대규모 보호예수(락업) 해제, 역대급 IPO 물량 전망. 같은 사건은 하나만 고르되 서로 다른 내용(신고서 제출, 규모, 시장 영향 전망)이면 따로 골라도 된다. 이 분류의 기사에는 implication 항목도 쓴다: 제목만 보고 추정한 시사점 한 문장(주식 공급이 늘면 수급 부담이 될 수 있다는 식), 반드시 "추정:"으로 시작하고 제목에 없는 숫자·사실은 만들지 않는다.
    - 이슈(최대 3): 요즘 시장의 쟁점. AI 자금조달 우려(데이터센터 투자·부채·오픈AI 자금), 사이버 보안 사고·보안주, 그 밖의 시장을 흔드는 이슈. title 맨 앞에 [AI자금] [보안] [기타] 중 하나를 붙인다.
    - 금(최대 2): 금값 급변, 중앙은행(특히 중국)의 금 매입, 금광주·금 관련 정책 소식.
    - 지정학: 전쟁, 외교, 제재 등. 소음이 많으니 일반 소식은 최대 2개만 고른다. 단 [경보] 기사는 개수와 상관없이 모두 고르고 category는 "지정학", level은 "high"로 한다.
@@ -507,7 +541,7 @@ def pick_with_ai(cands):
         row = {"category": cat, "title": title, "url": src["url"], "source": src["source"], "level": level}
         if src.get("alert") or it.get("safety") is True:  # 안전 신호는 분류·중요도를 코드가 고정한다
             row.update({"category": "지정학", "level": "high", "alert": True})
-        if cat == "보고서" and it.get("implication"):
+        if cat in IMPL_CATS and it.get("implication"):
             row["implication"] = str(it["implication"]).strip()[:120]
         items.append(row)
     # AI가 빠뜨린 안전 신호는 코드가 직접 넣는다 (제목은 원문 그대로)
@@ -697,6 +731,36 @@ def earnings_range(start, end):
         raise SafeError("모든 날짜 조회 실패")
     print(f"실적 일정: {ok_days}일 조회, 전체 {raw_count}건 중 주요 기업 {len(out)}건")
     out.sort(key=lambda x: (x["ymd"], HOUR_ORDER.get(x["hour"], 3), x["name"]))
+    return out
+
+
+IPO_MIN_VALUE = 1_000_000_000   # 공모 규모가 이 금액(달러) 이상인 대형 상장만 보여준다
+
+
+def ipo_events(now):
+    """Finnhub 상장(IPO) 일정 중 대형만. 무료 키로 안 열리면(401/403) 조용히 건너뛴다."""
+    key = os.environ.get("FINNHUB_API_KEY", "").strip()
+    if not key:
+        return []
+    start, end = f"{now:%Y-%m-%d}", f"{now + dt.timedelta(days=14):%Y-%m-%d}"
+    r = requests.get("https://finnhub.io/api/v1/calendar/ipo",
+                     params={"from": start, "to": end, "token": key}, timeout=TIMEOUT)
+    if r.status_code in (401, 403):
+        print("IPO 일정: 이 키로는 조회 권한이 없어 건너뜁니다")
+        return []
+    r.raise_for_status()
+    out = []
+    for e in r.json().get("ipoCalendar", []) or []:
+        name, d = str(e.get("name") or "").strip(), e.get("date")
+        val = e.get("totalSharesValue")
+        if not name or not d or not isinstance(val, (int, float)) or val < IPO_MIN_VALUE:
+            continue
+        status = str(e.get("status") or "")
+        label = {"priced": "공모가 확정", "expected": "상장 예정", "filed": "신고서 제출"}.get(status.lower(), "상장 일정")
+        out.append({"ymd": d, "time": "", "kind": "이벤트",
+                    "title": f"{name} IPO {label} · 공모 규모 약 {val / 1e8:,.0f}억 달러"})
+    out.sort(key=lambda x: x["ymd"])
+    print(f"IPO 일정: 대형 {len(out)}건")
     return out
 
 
@@ -890,6 +954,10 @@ def main():
 
     titles = [e["title"] for e in out["today_events"] + out["week_events"]]
     out["manual_events"] = manual_events(now, titles)
+    try:
+        out["manual_events"] += ipo_events(now)
+    except Exception as e:
+        failures.append({"name": "IPO 일정", "error": err_text(e)})
 
     try:
         out["earnings"] = earnings_range(f"{now:%Y-%m-%d}", f"{now + dt.timedelta(days=10):%Y-%m-%d}")
