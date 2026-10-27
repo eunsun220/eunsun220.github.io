@@ -806,6 +806,33 @@ def mover_news(h, now):
     return [{"title": clip(i["title"], 70), "url": i["url"]} for i in items]
 
 
+def quote_change(res, now, is_kr):
+    """Yahoo 일봉 응답에서 (직전 거래일 종가 대비 등락률 %, 기준 날짜)를 구한다.
+    마지막 막대의 종가가 비어 있거나 늦게 반영돼도 흔들리지 않게, 응답의 '현재가(regularMarketPrice)'와
+    '직전 거래일 종가'를 따로 찾는다. 한국 종목은 장이 열려 있는 동안엔 어제 종가 기준으로 계산한다."""
+    meta = res.get("meta", {})
+    off = meta.get("gmtoffset", 0)
+
+    def day_of(ts):
+        return (dt.datetime.fromtimestamp(ts, dt.timezone.utc) + dt.timedelta(seconds=off)).strftime("%Y-%m-%d")
+
+    bars = [(day_of(t), c) for t, c in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]) if c is not None]
+    if not bars:
+        raise RuntimeError("값이 비어 있음")
+    price, last_day = bars[-1][1], bars[-1][0]
+    if meta.get("regularMarketPrice") is not None and meta.get("regularMarketTime"):
+        price, last_day = float(meta["regularMarketPrice"]), day_of(meta["regularMarketTime"])
+    if is_kr and last_day == f"{now:%Y-%m-%d}" and now.hour * 60 + now.minute < 15 * 60 + 40:
+        done = [x for x in bars if x[0] < last_day]  # 오늘 한국 장은 아직 진행 중이라 어제까지만 쓴다
+        if not done:
+            raise RuntimeError("기록이 부족함")
+        last_day, price = done[-1]
+    prev = [c for d, c in bars if d < last_day]
+    if not prev:
+        raise RuntimeError("기록이 부족함")
+    return round((price / prev[-1] - 1) * 100, 1), last_day
+
+
 def holdings_quotes(now):
     """보유 종목의 전일 대비 등락률 (Yahoo Finance). 비트코인은 [시장]에 이미 있어서 뺀다."""
     out, failed = [], 0
@@ -817,14 +844,9 @@ def holdings_quotes(now):
             r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{h['symbol']}",
                              params={"range": "10d", "interval": "1d"}, headers=HEADERS, timeout=TIMEOUT)
             r.raise_for_status()
-            res = r.json()["chart"]["result"][0]
-            pts = [(t, c) for t, c in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]) if c is not None]
-            if len(pts) < 2:
-                raise RuntimeError("기록이 부족함")
-            off = res.get("meta", {}).get("gmtoffset", 0)
-            day = (dt.datetime.fromtimestamp(pts[-1][0], dt.timezone.utc) + dt.timedelta(seconds=off)).strftime("%Y-%m-%d")
-            chg = round((pts[-1][1] / pts[-2][1] - 1) * 100, 1)
-            row = {"name": h["ko"], "change": chg, "date": day}
+            is_kr = h["symbol"].upper().endswith((".KS", ".KQ"))
+            chg, day = quote_change(r.json()["chart"]["result"][0], now, is_kr)
+            row = {"name": h["ko"], "change": chg, "date": day, "kr": is_kr}
             if abs(chg) >= BIG_MOVE:
                 row["big"] = True
                 try:
