@@ -13,6 +13,7 @@
 """
 import datetime as dt
 import html
+from urllib.parse import quote
 import json
 import os
 import re
@@ -353,7 +354,79 @@ def weekly_block(weekly):
     return "\n".join(lines)
 
 
-def build_blocks(data, extras, weekly=None):
+YAHOO_CHART = "https://finance.yahoo.com/chart/"
+
+
+def ma_label(r):
+    n = esc(r["name"])
+    url = html.escape(YAHOO_CHART + quote(r["symbol"], safe=""), quote=True)
+    return f'<a href="{url}">{n}</a>'
+
+
+def ma_lines(r):
+    d50, d200 = r.get("d50"), r.get("d200")
+    parts = []
+    if d50 is not None:
+        parts.append(f"50일선 {d50:+.1f}%")
+    if d200 is not None:
+        parts.append(f"200일선 {d200:+.1f}%")
+    head = f"• {ma_label(r)}"
+    if r.get("kind") == "index":
+        head += f" {r['price']:,.0f}"
+    head += " — " + (" · ".join(parts) if parts else "계산 불가")
+    out = [head]
+    if d200 is None:
+        out.append(f"   ↳ 데이터 {r.get('days', 0)}일치뿐이라 200일선 계산 불가" + (" (50일선만 표시)" if d50 is not None else ""))
+        return out
+    arrow = {"up": "⬆", "down": "⬇", "flat": "➡"}.get(r.get("slope"), "")
+    mark = "🟢" if r.get("trend") == "상승 추세" else ("🔴" if r.get("trend") == "하락 추세" else "🟡")
+    line = f"   ↳ {mark} {esc(r['trend'])} (200일선 방향 {arrow})"
+    if r.get("cross") == "up":
+        line += " · 최근 10거래일 안에 200일선 위로 올라옴"
+    elif r.get("cross") == "down":
+        line += " · 최근 10거래일 안에 200일선 아래로 내려옴"
+    out.append(line)
+    out.append(f"   ↳ 판정: {esc(r['zone'])}")
+    w = r.get("w200")
+    if w:
+        tail = "최후 방어선 위" if w["d"] >= 0 else "최후 방어선 이탈 — 경계"
+        out.append(f"   ↳ 200주선 {w['value']:,.0f} 대비 {w['d']:+.1f}% ({tail})")
+    if r.get("kind") == "index" and r.get("slope"):
+        up, dn = r["slope"] == "up", r["slope"] == "down"
+        ab = r.get("above200")
+        out.append("   ↳ 점검: ①200일선 위 " + ("✅" if ab else "❌") + " ②방향 위로 " + ("✅" if up else "❌")
+                   + " ③200일선 아래 " + ("❌" if ab else "✅") + " ④방향 아래로 " + ("✅" if dn else "❌"))
+    return out
+
+
+def ma_block(ma):
+    if not ma or not ma.get("rows"):
+        return None
+    d = ma.get("as_of") or ""
+    lines = [f"<b>[주간 이동평균선 점검]</b> {esc(d[5:7] + '/' + d[8:10]) if d else ''} 종가 · 일봉 기준, 이동평균선 대비 몇 % 위/아래인지"]
+    deep = [r for r in ma["rows"] if r.get("deep")]
+    if deep:
+        lines.append("\n🔔 <b>200일선보다 20% 이상 아래 — 적극 매수 검토 구간</b>")
+        for r in deep:
+            lines.append(f"• {ma_label(r)} {r['d200']:+.1f}%")
+    else:
+        lines.append("\n🔔 200일선보다 20% 이상 아래인 종목: 해당 없음")
+    idx = [r for r in ma["rows"] if r.get("kind") == "index"]
+    stk = [r for r in ma["rows"] if r.get("kind") != "index"]
+    if idx:
+        lines.append("\n<b>1. 지수</b>")
+        for r in idx:
+            lines += ma_lines(r)
+    if stk:
+        lines.append("\n<b>2. 내 보유 종목</b>")
+        for r in stk:
+            lines += ma_lines(r)
+    lines.append("\n※ 과냉/과열 기준(지수 50일선 ±5%, 200일선 -10%/+15% 등)은 참고용 가정값입니다. 이름을 누르면 야후 파이낸스 차트가 열립니다. "
+                 "야후에서 직접 볼 땐 차트 → Indicators → Moving Average → Period 50 또는 200 → Save.")
+    return "\n".join(lines)
+
+
+def build_blocks(data, extras, weekly=None, ma=None):
     now = dt.datetime.now(KST)
     blocks = [f"<b>아침 시황 | {now.month}월 {now.day}일({WEEKDAYS[now.weekday()]})</b>\n{now:%H:%M} KST 기준으로 모은 정보입니다."]
 
@@ -388,7 +461,7 @@ def build_blocks(data, extras, weekly=None):
     # 요약은 위에서 이미 넣었으므로 뉴스 목록만 붙인다
     if nb:
         blocks.append(nb[-1])
-    for b in (today_block(extras), week_block(extras), weekly_block(weekly), cover_block(extras),
+    for b in (today_block(extras), week_block(extras), weekly_block(weekly), ma_block(ma), cover_block(extras),
               month_block(extras), reminder_block(extras)):
         if b:
             blocks.append(b)
@@ -397,6 +470,7 @@ def build_blocks(data, extras, weekly=None):
     missing = [f["name"] for f in (data.get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((extras or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((weekly or {}).get("failures") or [])]
+    missing += [f"{f['name']}({f['error']})" for f in ((ma or {}).get("failures") or [])]
     if missing:
         blocks.append("가져오지 못한 항목: " + esc(", ".join(missing)))
     blocks.append("AI가 정리한 참고용입니다. 투자 판단은 본인이 합니다.")
@@ -489,7 +563,10 @@ def main():
     today = dt.datetime.now(KST).strftime("%Y-%m-%d")
     if weekly and str(weekly.get("generated_at", ""))[:10] != today:
         weekly = None  # 오늘 만든 것만 쓴다
-    for chunk in split_blocks(build_blocks(data, extras, weekly)):
+    ma = load("ma.json")
+    if ma and str(ma.get("generated_at", ""))[:10] != today:
+        ma = None
+    for chunk in split_blocks(build_blocks(data, extras, weekly, ma)):
         send(token, chat_id, chunk)
     print("텔레그램으로 보냈습니다.")
 
