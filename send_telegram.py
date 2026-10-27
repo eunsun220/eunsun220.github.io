@@ -374,19 +374,18 @@ def ma_lines(r):
     if r.get("kind") == "index":
         head += f" {r['price']:,.0f}"
     head += " — " + (" · ".join(parts) if parts else "계산 불가")
+    if d200 is not None and r.get("zone"):
+        head += f" → {esc(r['zone'])}"
     out = [head]
     if d200 is None:
         out.append(f"   ↳ 데이터 {r.get('days', 0)}일치뿐이라 200일선 계산 불가" + (" (50일선만 표시)" if d50 is not None else ""))
         return out
+    out.append(f"   ↳ 판단: {esc(r['action'])}" + (" · ⭐적극 매수 검토(-20% 이하)" if r.get("deep") else ""))
+    if r.get("note"):
+        out.append(f"   ↳ {esc(r['note'])}")
     arrow = {"up": "⬆", "down": "⬇", "flat": "➡"}.get(r.get("slope"), "")
     mark = "🟢" if r.get("trend") == "상승 추세" else ("🔴" if r.get("trend") == "하락 추세" else "🟡")
-    line = f"   ↳ {mark} {esc(r['trend'])} (200일선 방향 {arrow})"
-    if r.get("cross") == "up":
-        line += " · 최근 10거래일 안에 200일선 위로 올라옴"
-    elif r.get("cross") == "down":
-        line += " · 최근 10거래일 안에 200일선 아래로 내려옴"
-    out.append(line)
-    out.append(f"   ↳ 판정: {esc(r['zone'])}")
+    out.append(f"   ↳ {mark} {esc(r['trend'])} (200일선 방향 {arrow})" + (" · 50일선 -5% 이하 눌림" if r.get("dip50") else ""))
     w = r.get("w200")
     if w:
         tail = "최후 방어선 위" if w["d"] >= 0 else "최후 방어선 이탈 — 경계"
@@ -399,18 +398,26 @@ def ma_lines(r):
     return out
 
 
+MA_LEGEND = (
+    "\n※ 200일선 이격도 구간: 🟥광기 +30% 이상 · 🟧과열 +20~30% · ⬜중립 -5~+20% · 🟨불안 -10~-5% · 🟦공포 -10% 이하\n"
+    "매수 기준: -15% 이하 1차 매수 시작(역발상·장기) → 0선 위로 올라올 때 2차 매수(상승장 초입) → 0~10% 매수 → 10~20% 관망(추매 X) → 20% 이상 추가 매수 보류\n"
+    "종목마다 흔들리는 폭이 달라 고변동주는 구간을 넓게 봐야 합니다. 이름을 누르면 야후 파이낸스 차트가 열립니다 "
+    "(차트 → Indicators → Moving Average → Period 50 또는 200 → Save)."
+)
+
+
 def ma_block(ma):
     if not ma or not ma.get("rows"):
         return None
     d = ma.get("as_of") or ""
     lines = [f"<b>[주간 이동평균선 점검]</b> {esc(d[5:7] + '/' + d[8:10]) if d else ''} 종가 · 일봉 기준, 이동평균선 대비 몇 % 위/아래인지"]
-    deep = [r for r in ma["rows"] if r.get("deep")]
-    if deep:
-        lines.append("\n🔔 <b>200일선보다 20% 이상 아래 — 적극 매수 검토 구간</b>")
-        for r in deep:
-            lines.append(f"• {ma_label(r)} {r['d200']:+.1f}%")
+    buy1 = [r for r in ma["rows"] if r.get("buy1")]
+    if buy1:
+        lines.append("\n🔔 <b>200일선 -15% 이하 — 과냉(역발상·장기 관점) 1차 매수 시작 구간</b>")
+        for r in buy1:
+            lines.append(f"• {ma_label(r)} {r['d200']:+.1f}%" + (" ⭐적극 매수 검토(-20% 이하)" if r.get("deep") else ""))
     else:
-        lines.append("\n🔔 200일선보다 20% 이상 아래인 종목: 해당 없음")
+        lines.append("\n🔔 200일선 -15% 이하(1차 매수 구간)인 종목: 해당 없음")
     idx = [r for r in ma["rows"] if r.get("kind") == "index"]
     stk = [r for r in ma["rows"] if r.get("kind") != "index"]
     if idx:
@@ -421,8 +428,7 @@ def ma_block(ma):
         lines.append("\n<b>2. 내 보유 종목</b>")
         for r in stk:
             lines += ma_lines(r)
-    lines.append("\n※ 과냉/과열 기준(지수 50일선 ±5%, 200일선 -10%/+15% 등)은 참고용 가정값입니다. 이름을 누르면 야후 파이낸스 차트가 열립니다. "
-                 "야후에서 직접 볼 땐 차트 → Indicators → Moving Average → Period 50 또는 200 → Save.")
+    lines.append(MA_LEGEND)
     return "\n".join(lines)
 
 
