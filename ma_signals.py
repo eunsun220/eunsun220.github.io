@@ -1,12 +1,12 @@
 """
-아침 시황 - 토요일 이동평균선(50일선·200일선) 점검 (ma.json 을 만든다)
+아침 시황 - 수·토요일 이동평균선(50일선·200일선) 점검 (ma.json 을 만든다)
 
 하는 일
   1) 지수 3개(S&P500·나스닥·다우)와 내 보유 종목의 일봉 종가를 Yahoo Finance 에서 가져온다 (무료)
   2) 50일선·200일선 대비 몇 % 위/아래인지, 200일선이 오르는 중인지 내리는 중인지를 코드가 계산한다
   3) 200일선 이격도를 광기/과열/중립/불안/공포로 나누고, -15% 이하(1차 매수)·-20% 이하(적극 검토)는 따로 모아 알려준다
   4) 지수는 200주선(침체·위기 때 최후 방어선)도 같이 본다
-  5) 토요일(한국시간)에만 실행한다. 손으로 시험할 때는 FORCE_SECTIONS 에 ma 를 적는다.
+  5) 수요일·토요일(한국시간)에만 실행한다. 손으로 시험할 때는 FORCE_SECTIONS 에 ma 를 적는다.
 실패해도 멈추지 않는다 (아침 시황 본문은 그대로 나간다).
 숫자는 전부 코드가 계산하고 AI는 쓰지 않는다. 보유 종목 이름은 로그에 찍지 않는다.
 """
@@ -19,6 +19,9 @@ import requests
 import extras  # HOLDINGS(내 종목)·HEADERS 를 그대로 가져다 쓴다
 
 KST = dt.timezone(dt.timedelta(hours=9))
+
+# 점검을 보내는 요일 (월=0 … 일=6). 수요일(2)과 토요일(5). 바꾸고 싶으면 숫자만 고치면 됩니다.
+RUN_DAYS = (2, 5)
 
 INDICES = [("S&P500", "^GSPC"), ("나스닥", "^IXIC"), ("다우", "^DJI")]
 
@@ -162,8 +165,8 @@ def weekly200(sym):
 
 def main():
     now = dt.datetime.now(KST)
-    if now.weekday() != 5 and not extras.forced("ma"):
-        print("토요일이 아니라서 이동평균선 점검은 건너뜁니다.")
+    if now.weekday() not in RUN_DAYS and not extras.forced("ma"):
+        print("수요일·토요일이 아니라서 이동평균선 점검은 건너뜁니다.")
         if os.path.exists("ma.json"):
             os.remove("ma.json")
         return
