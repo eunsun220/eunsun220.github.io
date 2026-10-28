@@ -410,7 +410,7 @@ def ma_block(ma):
     if not ma or not ma.get("rows"):
         return None
     d = ma.get("as_of") or ""
-    lines = [f"<b>[주간 이동평균선 점검]</b> {esc(d[5:7] + '/' + d[8:10]) if d else ''} 종가 · 일봉 기준, 이동평균선 대비 몇 % 위/아래인지"]
+    lines = [f"<b>[이동평균선 점검 · 수/토]</b> {esc(d[5:7] + '/' + d[8:10]) if d else ''} 종가 · 일봉 기준, 이동평균선 대비 몇 % 위/아래인지"]
     buy1 = [r for r in ma["rows"] if r.get("buy1")]
     if buy1:
         lines.append("\n🔔 <b>200일선 -15% 이하 — 과냉(역발상·장기 관점) 1차 매수 시작 구간</b>")
