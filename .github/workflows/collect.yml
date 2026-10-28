@@ -63,7 +63,7 @@ jobs:
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python weekly.py
 
-      - name: 토요일 이동평균선 점검
+      - name: 수·토요일 이동평균선 점검
         if: ${{ github.event.inputs.test_only != 'true' }}
         continue-on-error: true
         env:
