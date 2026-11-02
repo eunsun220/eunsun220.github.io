@@ -191,7 +191,7 @@ def news_blocks(extras):
     return blocks
 
 
-KIND_MARK = {"지표": "📊", "정책": "🏛", "발언": "🎤", "실적": "💼", "이벤트": "📌"}
+KIND_MARK = {"지표": "📊", "정책": "🏛", "발언": "🎤", "실적": "💼", "이벤트": "📌", "코인": "🪙"}
 MAX_EARN_WEEK = 30  # 이번 주 칸에 보여줄 실적 발표 최대 개수 (너무 길어지지 않게)
 # 개수가 넘칠 때 먼저 남겨 둘 주요 기업 (나머지는 날짜순으로 채움)
 PRIORITY_EARN = {"NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "TSM", "AMD", "INTC", "MU",
