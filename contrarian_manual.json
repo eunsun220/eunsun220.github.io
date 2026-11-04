@@ -1,0 +1,8 @@
+{
+  "설명": "자동으로 못 가져온 지표가 있을 때만 쓰입니다. value 에 숫자를 적고 date 에 날짜를 적으세요. value 가 null 이면 무시됩니다.",
+  "bull_bear": {"value": null, "date": "2026-10-29"},
+  "put_call": {"value": null, "date": "2026-10-30"},
+  "margin_yoy": {"value": null, "date": "2026-09"},
+  "hy": {"value": null, "date": ""},
+  "vix": {"value": null, "date": ""}
+}
