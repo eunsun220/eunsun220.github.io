@@ -13,7 +13,7 @@ on:
         required: false
         default: "false"
       force_sections:
-        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, ma, cover, monthend, monthly). 비워 두면 평소대로"
+        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, ma, gauge, cover, monthend, monthly). 비워 두면 평소대로"
         required: false
         default: ""
 
@@ -70,6 +70,14 @@ jobs:
           HOLDINGS: ${{ secrets.HOLDINGS }}
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python ma_signals.py
+
+      - name: 월·수·금요일 역발상 판독기
+        if: ${{ github.event.inputs.test_only != 'true' }}
+        continue-on-error: true
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
+        run: python contrarian.py
 
       - name: 텔레그램으로 보내기
         if: ${{ github.event.inputs.test_only != 'true' }}
