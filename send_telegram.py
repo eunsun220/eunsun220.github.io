@@ -432,7 +432,70 @@ def ma_block(ma):
     return "\n".join(lines)
 
 
-def build_blocks(data, extras, weekly=None, ma=None):
+CONTRARIAN_HELP = [
+    ("낙관/비관 스프레드 (주간)",
+     ["미국 개인투자자협회(AAII)가 개인투자자에게 '앞으로 6개월 주식이 오를까, 내릴까'를 묻는 설문이에요. 낙관 % − 비관 % 가 스프레드이고 매주 목요일에 발표돼요.",
+      "사람들이 너무 비관적이면(마이너스) 오히려 바닥 근처, 너무 낙관적이면(플러스) 고점 근처라고 보는 게 '역발상'이에요.",
+      "내 기준: -20 이하 1차 매수 · -30 이하 2차 매수 · 비관론이 정점(바닥)을 찍고 올라갈 때 3차 매수(하락장이 길어질 수 있어서). 비관론 50% 이상일 때 저점인 경우가 많았어요.",
+      "점수: +30 이상 5광기 · +20~30 4과열 · -20~+20 3중립 · -30~-20 2불안 · -30 이하 1공포"]),
+    ("풋/콜 비율 (일간)",
+     ["CBOE 주식 옵션에서 풋(하락 베팅) 거래량 ÷ 콜(상승 베팅) 거래량이에요. 높으면 하락 베팅이 우세(공포), 낮으면 상승 베팅이 우세(낙관)예요.",
+      "내 기준: 1 이상(1년에 1~2번) 1차 매수 · 1.5 이상(2년에 1~2번) 2차 · 2 이상(3년에 1~2번) 3차 매수. 0.5 이하는 단기 고점 신호일 수 있지만 잘 안 맞고 상승이 생각보다 오래 가는 편이에요.",
+      "점수: 0.4 이하 5광기 · 0.4~0.5 4과열 · 0.5~1 3중립 · 1~1.2 2불안 · 1.2 이상 1공포"]),
+    ("빚투 = 신용융자 증가율 (월간)",
+     ["증권사에서 돈을 빌려 산 주식 잔고(신용융자)가 1년 전보다 몇 % 늘었는지예요. FINRA가 한 달에 한 번, 약 한 달 늦게 발표해요.",
+      "빠르게 늘면 과열, 크게 줄면 바닥 근처예요. 전년보다 늘고 있는지 줄고 있는지 방향도 같이 봐요.",
+      "내 기준: -20% 이하면 매수 준비(바닥을 찍고 올라올 때 절호의 기회) · 전년 대비 +40%(지난 사이클 고점), +50%(큰 사이클 고점) 이상이면 고점 신호 → 매도 준비.",
+      "점수: +40 이상 5광기 · +20~40 4과열 · -20~+20 3중립 · -30~-20 2불안 · -30 이하 1공포"]),
+    ("하이일드 스프레드 (일간)",
+     ["신용등급이 낮은 회사채가 국채보다 더 주는 이자예요. 뉴스에 속지 않고 시장의 '진짜 위기감'을 보게 해줘요.",
+      "3% 이하 대호황 · 5% 넘으면 1차 경계(주식 15~20% 하락, 몇 주~1~2개월 요동) · 7% 넘으면 2차 경계(20% 이상 하락, 침체급 쇼크, 막판 추가 급락 가능 → 모니터링).",
+      "5% 밑에서 내려오기 시작하면 가짜 위기·조정 매수, 피크를 찍고 내려올 때(몇 %든) 적극 매수, 전고점을 못 넘고 내려오면 하향 안정이에요.",
+      "점수: 3% 이하 5광기 · 바닥+1% 4과열 · 3~5% 박스 3중립 · 5% 위 상승세 2불안 · 5% 상승 후 1%p 하락 1공포",
+      "※ 표의 '바닥+1%'는 기준이 애매해서 '최근 1년 최저점 +0.5%p 이내'로 해석했어요."]),
+    ("VIX (일간)",
+     ["향후 1개월 미국 증시 변동성에 대한 기대를 나타내는 공포지수예요. 5개 중 영향력이 가장 약하고, 하루에도 많이 움직여 헷갈리는 편이에요.",
+      "내 기준: 30 이상 위기 충격 대비 · 20~30 고변동 · 20 이하 안정·강세장.",
+      "점수: 15 이하 5광기 · 15~20 4과열 · 20~30 3중립 · 30~40 2불안 · 40 이상 1공포"]),
+]
+
+
+def contrarian_caption(c):
+    if not c or c.get("total") is None:
+        return None
+    return f"역발상 판독기 {c['as_of'][5:7]}/{c['as_of'][8:10]} 기준 · 총점 {c['total']:.1f} {c['zone']} → {c['action']} ({c['count']}/5개 지표)"
+
+
+def contrarian_blocks(c):
+    if not c or not c.get("items"):
+        return []
+    d = c.get("as_of", "")
+    head = [f"<b>[역발상 판독기 · 월/수/금]</b> {esc(d[5:7] + '/' + d[8:10])} 기준 · 5가지 지표를 1점(공포)~5점(광기)으로 매겨 평균을 냅니다"]
+    if c.get("total") is None:
+        head.append(f"총점: 집계 불가 (자동 수집된 지표가 {c.get('count', 0)}개뿐이라 3개 이상일 때만 계산)")
+    else:
+        head.append(f"총점 <b>{c['total']:.1f} · {esc(c['zone'])}</b> → 증시 매매 판단: <b>{esc(c['action'])}</b> ({c['count']}/5개 지표 반영)")
+    for n, it in enumerate(c["items"], 1):
+        if it.get("score") is None:
+            head.append(f"\n{n}. {esc(it['name'])} ({esc(it['cycle'])}) — 미수집 (자동 수집 실패)")
+            continue
+        dd = it.get("date") or ""
+        dd = dd[5:7] + "/" + dd[8:10] if len(dd) == 10 and dd[4] == "-" else dd
+        tag = " · 수동 입력값" if it.get("manual") else ""
+        head.append(f"\n{n}. {esc(it['name'])} ({esc(it['cycle'])}) <b>{esc(it['value_text'])}</b> → {it['score']}점 {esc(it['label'])}"
+                    + (f"  [{esc(dd)} 기준{tag}]" if dd or tag else ""))
+        if it.get("extra"):
+            head.append("   ↳ " + esc(it["extra"]))
+    head.append("\n총점 구간: 4.2 이상 광기(분할 매도) · 3.2~4.2 과열(매도 준비) · 2.6~3.2 중립(매매 보류) · 1.8~2.6 불안(분할 매수) · 1.8 미만 공포(역발상 매수, 장기)")
+    help_lines = ["<b>[역발상 판독기 쉽게 읽는 법]</b> 판독기로 시장 쏠림을 먼저 확인한 뒤, 개별 종목은 이동평균선 점검 칸으로 대응합니다"]
+    for n, (title, lines) in enumerate(CONTRARIAN_HELP, 1):
+        help_lines.append(f"\n<b>{n}. {esc(title)}</b>")
+        help_lines += ["• " + esc(x) for x in lines]
+    help_lines.append("\n※ 총점 구간 숫자(4.2/3.2/2.6/1.8)는 표의 예시(3.2점=과열)에 맞춰 정한 값입니다. 점수는 높을수록 낙관이 쏠린 상태, 낮을수록 공포가 쏠린 상태예요.")
+    return ["\n".join(head), "\n".join(help_lines)]
+
+
+def build_blocks(data, extras, weekly=None, ma=None, contrarian=None):
     now = dt.datetime.now(KST)
     blocks = [f"<b>아침 시황 | {now.month}월 {now.day}일({WEEKDAYS[now.weekday()]})</b>\n{now:%H:%M} KST 기준으로 모은 정보입니다."]
 
@@ -467,7 +530,7 @@ def build_blocks(data, extras, weekly=None, ma=None):
     # 요약은 위에서 이미 넣었으므로 뉴스 목록만 붙인다
     if nb:
         blocks.append(nb[-1])
-    for b in (today_block(extras), week_block(extras), weekly_block(weekly), ma_block(ma), cover_block(extras),
+    for b in (today_block(extras), week_block(extras), weekly_block(weekly), ma_block(ma), *contrarian_blocks(contrarian), cover_block(extras),
               month_block(extras), reminder_block(extras)):
         if b:
             blocks.append(b)
@@ -477,6 +540,7 @@ def build_blocks(data, extras, weekly=None, ma=None):
     missing += [f"{f['name']}({f['error']})" for f in ((extras or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((weekly or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((ma or {}).get("failures") or [])]
+    missing += [f"{f['name']}({f['error']})" for f in ((contrarian or {}).get("failures") or [])]
     if missing:
         blocks.append("가져오지 못한 항목: " + esc(", ".join(missing)))
     blocks.append("AI가 정리한 참고용입니다. 투자 판단은 본인이 합니다.")
@@ -540,6 +604,18 @@ def send(token, chat_id, text, html_mode=True):
     sys.exit(1)
 
 
+def send_photo(token, chat_id, path, caption):
+    """사진을 보낸다. 실패해도 멈추지 않는다(글은 그대로 나간다)."""
+    try:
+        with open(path, "rb") as fp:
+            r = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto",
+                              data={"chat_id": chat_id, "caption": caption[:1000]}, files={"photo": fp}, timeout=60)
+        if not r.ok:
+            print(f"그림 전송 실패: HTTP {r.status_code}")
+    except (requests.RequestException, OSError) as e:
+        print(f"그림 전송 실패: {type(e).__name__}")
+
+
 def load(path):
     try:
         with open(path, encoding="utf-8") as fp:
@@ -572,7 +648,13 @@ def main():
     ma = load("ma.json")
     if ma and str(ma.get("generated_at", ""))[:10] != today:
         ma = None
-    for chunk in split_blocks(build_blocks(data, extras, weekly, ma)):
+    con = load("contrarian.json")
+    if con and str(con.get("generated_at", ""))[:10] != today:
+        con = None
+    cap = contrarian_caption(con)
+    if con and cap and con.get("image") and os.path.exists(con["image"]):
+        send_photo(token, chat_id, con["image"], cap)  # 월·수·금요일: 판독기 그림을 먼저 보낸다
+    for chunk in split_blocks(build_blocks(data, extras, weekly, ma, con)):
         send(token, chat_id, chunk)
     print("텔레그램으로 보냈습니다.")
 
