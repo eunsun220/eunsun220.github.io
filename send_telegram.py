@@ -496,7 +496,49 @@ def contrarian_blocks(c):
     return ["\n".join(head), "\n".join(help_lines)]
 
 
-def build_blocks(data, extras, weekly=None, ma=None, contrarian=None):
+def watch_block(w):
+    """목요일 흐름 체크: 그룹별 평균과 종목별 5거래일·선거 이후 등락."""
+    if not w or not w.get("groups"):
+        return None
+
+    def pc(v):
+        return "-" if v is None else f"{v:+.1f}%"
+
+    def dot(v):
+        return "⚪" if v is None else ("🟢" if v > 0 else ("🔴" if v < 0 else "⚪"))
+
+    e = str(w.get("election_date", ""))[5:].replace("-", "/")
+    head = [f"<b>[주간 흐름 체크 · 목]</b> {esc(str(w.get('as_of', ''))[5:].replace('-', '/'))} 종가 기준 · "
+            f"최근 5거래일 / 선거({esc(e)} 종가) 이후 / 200일선 대비 %"]
+    sm = w.get("summary") or {}
+    if sm.get("strong") and sm.get("weak"):
+        st = " · ".join(f"{x['emoji']}{esc(x['name'])} {pc(x['avg'])}" for x in sm["strong"])
+        wk = " · ".join(f"{x['emoji']}{esc(x['name'])} {pc(x['avg'])}" for x in sm["weak"])
+        head.append(f"강한 그룹: {st}")
+        head.append(f"약한 그룹: {wk}")
+    if sm.get("top") and sm.get("bottom"):
+        head.append("가장 오른 종목: " + " · ".join(f"{esc(x['name'])} {pc(x['w'])}" for x in sm["top"]))
+        head.append("가장 내린 종목: " + " · ".join(f"{esc(x['name'])} {pc(x['w'])}" for x in sm["bottom"]))
+    if sm.get("cold"):
+        head.append("🔔 200일선 -15% 이하(과냉·1차 매수 검토 구간): " +
+                    " · ".join(f"{esc(x['name'])} {pc(x['d200'])}" for x in sm["cold"]))
+    blocks = ["\n".join(head)]
+    for g in w["groups"]:
+        lines = [f"<b>{g['emoji']} {esc(g['name'])}</b> 평균 {pc(g['avg_w'])} / 선거 후 {pc(g['avg_e'])}",
+                 f"   ↳ {esc(g['note'])}"]
+        for i in g["items"]:
+            star = " ⭐보유" if i.get("held") else ""
+            d2 = i.get("d200")
+            tail = f" / 200일선 {pc(d2)} {i.get('zone', '')}" if d2 is not None else " / 200일선 -"
+            lines.append(f"• {dot(i['w'])} {esc(i['symbol'])} {esc(i['name'])}{star}  {pc(i['w'])} / {pc(i['e'])}{tail}")
+        blocks.append("\n".join(lines))
+    blocks.append("※ 그룹 분류와 설명은 참고용이에요. 같은 종목이라도 한 그룹에만 넣어 계산했어요. "
+                  "'5거래일'은 일주일 전 종가 대비, '선거 이후'는 11/03 종가 대비 등락률이에요. "
+                  "200일선은 일봉 200일 평균 대비 위치예요 (⬜중립 · 🟧과열 · 🟥광기 · 🟨불안 · 🟦공포).")
+    return "\n\n".join(blocks)
+
+
+def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None):
     now = dt.datetime.now(KST)
     blocks = [f"<b>아침 시황 | {now.month}월 {now.day}일({WEEKDAYS[now.weekday()]})</b>\n{now:%H:%M} KST 기준으로 모은 정보입니다."]
 
@@ -524,14 +566,23 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None):
             order.append(row["group"])
         groups[row["group"]].append(row)
     notes = {"유동성": "대부분 주 1회 발표라 며칠 전 숫자입니다", "금리": "장단기금리차는 하루 늦게 반영됩니다"}
+    # 판독기가 오는 날(판독기에 하이일드 점수가 있을 때)은 하이일드 스프레드를 한 줄로 줄인다
+    con_hy = any("하이일드" in str(it.get("name", "")) and it.get("score") is not None
+                 for it in ((contrarian or {}).get("items") or []))
     for g in order:
         title = f"<b>[{esc(g)}]</b>" + (f" {notes[g]}" if g in notes else "")
-        blocks.append("\n".join([title] + [line(r, now) for r in groups[g]]))
+        lines_g = []
+        for r in groups[g]:
+            ln = line(r, now)
+            if con_hy and "하이일드" in r["name"]:
+                ln = ln.split("\n")[0] + esc(" · 상세는 아래 판독기 참고")
+            lines_g.append(ln)
+        blocks.append("\n".join([title] + lines_g))
 
     # 요약은 위에서 이미 넣었으므로 뉴스 목록만 붙인다
     if nb:
         blocks.append(nb[-1])
-    for b in (today_block(extras), week_block(extras), weekly_block(weekly), ma_block(ma), *contrarian_blocks(contrarian), cover_block(extras),
+    for b in (today_block(extras), week_block(extras), weekly_block(weekly), watch_block(watch), ma_block(ma), *contrarian_blocks(contrarian), cover_block(extras),
               month_block(extras), reminder_block(extras)):
         if b:
             blocks.append(b)
@@ -542,6 +593,7 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None):
     missing += [f"{f['name']}({f['error']})" for f in ((weekly or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((ma or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((contrarian or {}).get("failures") or [])]
+    missing += [f"{f['name']}({f['error']})" for f in ((watch or {}).get("failures") or [])]
     if missing:
         blocks.append("가져오지 못한 항목: " + esc(", ".join(missing)))
     blocks.append("AI가 정리한 참고용입니다. 투자 판단은 본인이 합니다.")
@@ -680,10 +732,13 @@ def main():
     con = load("contrarian.json")
     if con and str(con.get("generated_at", ""))[:10] != today:
         con = None
+    wt = load("watch.json")
+    if wt and str(wt.get("generated_at", ""))[:10] != today:
+        wt = None
     cap = contrarian_caption(con)
     if con and cap and con.get("image") and os.path.exists(con["image"]):
         send_photo(token, chat_id, con["image"], cap)  # 월·수·금요일: 판독기 그림을 먼저 보낸다
-    chunks = split_blocks(build_blocks(data, extras, weekly, ma, con))
+    chunks = split_blocks(build_blocks(data, extras, weekly, ma, con, wt))
     failed = 0
     for i, chunk in enumerate(chunks):
         if i:
