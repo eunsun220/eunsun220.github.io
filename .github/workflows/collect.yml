@@ -87,6 +87,11 @@ jobs:
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python contrarian.py
 
+      - name: 일정 달력 그림 만들기
+        if: ${{ github.event.inputs.test_only != 'true' }}
+        continue-on-error: true
+        run: python calendar_img.py
+
       - name: 텔레그램으로 보내기
         if: ${{ github.event.inputs.test_only != 'true' }}
         env:
