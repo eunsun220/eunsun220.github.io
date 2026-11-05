@@ -15,6 +15,7 @@ import datetime as dt
 import html
 from urllib.parse import quote
 import json
+import time
 import os
 import re
 import sys
@@ -575,33 +576,61 @@ def post(token, payload):
     return requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=30)
 
 
-def send(token, chat_id, text, html_mode=True):
+def send(token, chat_id, text, html_mode=True, depth=0):
+    """한 덩어리를 보낸다. 성공하면 True, 끝내 실패하면 False (멈추지 않고 다음 덩어리를 계속 보낸다).
+    - 너무 자주 보냈다는 오류(429)·서버 오류(5xx)·인터넷 끊김은 잠깐 쉬고 최대 4번까지 다시 시도한다.
+    - HTML 모양 오류면 태그를 지우고 일반 글로, 그래도 안 되면(글이 너무 길다 등) 반으로 쪼개 다시 보낸다."""
     payload = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
     if html_mode:
         payload["parse_mode"] = "HTML"
-    try:
-        r = post(token, payload)
-    except requests.RequestException as e:
-        # 오류 글에 주소(=토큰)가 섞일 수 있어서 종류만 출력한다
-        print(f"전송 실패: 인터넷 연결 문제 ({type(e).__name__})")
-        sys.exit(1)
+    r, reason = None, ""
+    for attempt in range(4):
+        try:
+            r = post(token, payload)
+        except requests.RequestException as e:
+            # 오류 글에 주소(=토큰)가 섞일 수 있어서 종류만 출력한다
+            print(f"전송 실패: 인터넷 연결 문제 ({type(e).__name__}) - 다시 시도 {attempt + 1}/4")
+            time.sleep(3 * (attempt + 1))
+            r = None
+            continue
+        if r.ok:
+            return True
+        try:
+            js = r.json()
+            reason = js.get("description", "")
+            wait = int(js.get("parameters", {}).get("retry_after", 0))
+        except (ValueError, AttributeError, TypeError):
+            reason, wait = "", 0
+        if r.status_code == 429 or r.status_code >= 500:
+            wait = min(max(wait, 3), 60)
+            print(f"전송 지연: HTTP {r.status_code} - {wait}초 쉬고 다시 시도 {attempt + 1}/4")
+            time.sleep(wait)
+            continue
+        break
+    if r is None:
+        print("전송 실패: 인터넷 연결이 계속 안 됩니다.")
+        return False
     if r.ok:
-        return
-    try:
-        reason = r.json().get("description", "")
-    except ValueError:
-        reason = ""
-    if html_mode and r.status_code == 400 and "parse" in reason.lower():
-        # 글 모양(HTML) 문제면 태그를 지우고 일반 글로 다시 보낸다
-        print("HTML 모양 오류 -> 일반 글로 다시 보냅니다.")
+        return True
+    if html_mode and r.status_code == 400:
+        # 글 모양(HTML) 문제 등 → 태그를 지우고 일반 글로 다시 보낸다
+        print(f"HTML 모양 오류({reason[:60]}) -> 일반 글로 다시 보냅니다.")
         plain = html.unescape(re.sub(r"<[^>]+>", "", text))
-        return send(token, chat_id, plain, html_mode=False)
+        return send(token, chat_id, plain, html_mode=False, depth=depth)
+    if r.status_code == 400 and depth < 3 and "\n" in text.strip():
+        # 글이 너무 길다 등 → 줄 단위로 반으로 쪼개 보낸다
+        lines = text.strip().split("\n")
+        mid = len(lines) // 2
+        print(f"글을 반으로 나눠 다시 보냅니다. ({reason[:60]})")
+        ok1 = send(token, chat_id, "\n".join(lines[:mid]), html_mode=html_mode, depth=depth + 1)
+        ok2 = send(token, chat_id, "\n".join(lines[mid:]), html_mode=html_mode, depth=depth + 1)
+        return ok1 and ok2
     print(f"전송 실패: HTTP {r.status_code} {reason}")
     if r.status_code in (400, 403):
         print("힌트: 채팅 번호가 맞는지, 봇에게 먼저 /start 를 보냈는지 확인하세요.")
     if r.status_code in (401, 404):
         print("힌트: 봇 토큰이 맞는지 확인하세요.")
-    sys.exit(1)
+    return False
 
 
 def send_photo(token, chat_id, path, caption):
@@ -654,8 +683,17 @@ def main():
     cap = contrarian_caption(con)
     if con and cap and con.get("image") and os.path.exists(con["image"]):
         send_photo(token, chat_id, con["image"], cap)  # 월·수·금요일: 판독기 그림을 먼저 보낸다
-    for chunk in split_blocks(build_blocks(data, extras, weekly, ma, con)):
-        send(token, chat_id, chunk)
+    chunks = split_blocks(build_blocks(data, extras, weekly, ma, con))
+    failed = 0
+    for i, chunk in enumerate(chunks):
+        if i:
+            time.sleep(1.5)  # 너무 빨리 연달아 보내면 텔레그램이 막는다
+        if not send(token, chat_id, chunk):
+            failed += 1
+    print(f"텔레그램 전송: {len(chunks)}개 중 {len(chunks) - failed}개 성공")
+    if failed:
+        print(f"{failed}개 덩어리를 끝내 못 보냈습니다.")
+        sys.exit(1)
     print("텔레그램으로 보냈습니다.")
 
 
