@@ -538,7 +538,7 @@ def watch_block(w):
     return "\n\n".join(blocks)
 
 
-def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None):
+def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None, cal_ok=False, cal=None):
     now = dt.datetime.now(KST)
     blocks = [f"<b>아침 시황 | {now.month}월 {now.day}일({WEEKDAYS[now.weekday()]})</b>\n{now:%H:%M} KST 기준으로 모은 정보입니다."]
 
@@ -582,7 +582,7 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None
     # 요약은 위에서 이미 넣었으므로 뉴스 목록만 붙인다
     if nb:
         blocks.append(nb[-1])
-    for b in (today_block(extras), week_block(extras), weekly_block(weekly), watch_block(watch), ma_block(ma), *contrarian_blocks(contrarian), cover_block(extras),
+    for b in (None if cal_ok else today_block(extras), None if cal_ok else week_block(extras), weekly_block(weekly), watch_block(watch), ma_block(ma), *contrarian_blocks(contrarian), cover_block(extras),
               month_block(extras), reminder_block(extras)):
         if b:
             blocks.append(b)
@@ -594,6 +594,7 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None
     missing += [f"{f['name']}({f['error']})" for f in ((ma or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((contrarian or {}).get("failures") or [])]
     missing += [f"{f['name']}({f['error']})" for f in ((watch or {}).get("failures") or [])]
+    missing += [f"{f['name']}({f['error']})" for f in ((cal or {}).get("failures") or [])]
     if missing:
         blocks.append("가져오지 못한 항목: " + esc(", ".join(missing)))
     blocks.append("AI가 정리한 참고용입니다. 투자 판단은 본인이 합니다.")
@@ -735,16 +736,23 @@ def main():
     wt = load("watch.json")
     if wt and str(wt.get("generated_at", ""))[:10] != today:
         wt = None
+    cal = load("calendar.json")
+    cal_imgs = []
+    if cal and str(cal.get("generated_at", ""))[:10] == today:
+        cal_imgs = [i for i in (cal.get("images") or []) if i.get("path") and os.path.exists(i["path"])]
     cap = contrarian_caption(con)
     if con and cap and con.get("image") and os.path.exists(con["image"]):
         send_photo(token, chat_id, con["image"], cap)  # 월·수·금요일: 판독기 그림을 먼저 보낸다
-    chunks = split_blocks(build_blocks(data, extras, weekly, ma, con, wt))
+    chunks = split_blocks(build_blocks(data, extras, weekly, ma, con, wt, cal_ok=bool(cal_imgs), cal=cal))
     failed = 0
     for i, chunk in enumerate(chunks):
         if i:
             time.sleep(1.5)  # 너무 빨리 연달아 보내면 텔레그램이 막는다
         if not send(token, chat_id, chunk):
             failed += 1
+    for i in cal_imgs:  # 일정 달력 그림은 글 다음(가장 아래)에 보낸다 — 열자마자 보이는 자리
+        time.sleep(1.5)
+        send_photo(token, chat_id, i["path"], i.get("caption", ""))
     print(f"텔레그램 전송: {len(chunks)}개 중 {len(chunks) - failed}개 성공")
     if failed:
         print(f"{failed}개 덩어리를 끝내 못 보냈습니다.")
