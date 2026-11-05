@@ -218,8 +218,8 @@ def get_margin():
             if -80 < yoy < 300:
                 return {"value": round(yoy, 1), "date": lab, "prev3": round(yoy_3m, 1),
                         "level": last[1] / 1_000_000}
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"FINRA 엑셀 실패: {type(e).__name__} {str(e)[:80]}")
     t = page_text(YCHARTS_MARGIN)  # 2) YCharts 문장 "...X% from one year ago"
     m = re.search(r"(-?\d+(?:\.\d+)?)\s*%\s+from\s+one\s+year\s+ago", t)
     d = re.search(r"Latest Period\s*([A-Z][a-z]{2,8} \d{4})", t)
@@ -313,20 +313,41 @@ COLORS = {"공포": "#1a9850", "불안": "#7bbf4a", "중립": "#f2c200", "과열
 TEXT_COLORS = {"공포": "#1a9850", "불안": "#5a9a2c", "중립": "#333333", "과열": "#e07000", "광기": "#d73027"}
 
 
+FONT_URLS = ("https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
+             "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Bold.ttf")
+
+
 def find_korean_font():
     from matplotlib import font_manager as fm
     def look():
         names = {f.name for f in fm.fontManager.ttflist}
         return next((c for c in FONT_CANDIDATES if c in names), None)
     found = look()
-    if not found:  # 서버에 한글 글꼴이 없으면 설치 시도 (GitHub 서버에서만 동작)
+    if not found:  # 1) 서버에 한글 글꼴이 없으면 설치 시도 (먼저 목록을 새로 받아야 설치가 된다)
         try:
+            subprocess.run(["sudo", "apt-get", "update", "-qq"], timeout=180,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["sudo", "apt-get", "install", "-y", "-qq", "fonts-nanum"],
                            check=True, timeout=240, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             fm._load_fontmanager(try_read_cache=False)
             found = look()
-        except Exception:
-            found = None
+        except Exception as e:
+            print(f"글꼴 설치(apt) 실패: {type(e).__name__}")
+    if not found:  # 2) 안 되면 글꼴 파일을 직접 받아서 쓴다
+        try:
+            d = os.path.join(os.getcwd(), "fonts")
+            os.makedirs(d, exist_ok=True)
+            for u in FONT_URLS:
+                p = os.path.join(d, u.rsplit("/", 1)[-1])
+                if not os.path.exists(p):
+                    r = requests.get(u, timeout=60)
+                    r.raise_for_status()
+                    with open(p, "wb") as fp:
+                        fp.write(r.content)
+                fm.fontManager.addfont(p)
+            found = look()
+        except Exception as e:
+            print(f"글꼴 내려받기 실패: {type(e).__name__}")
     if not found:
         raise RuntimeError("한글 글꼴 없음")
     return found
