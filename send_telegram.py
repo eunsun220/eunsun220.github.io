@@ -147,6 +147,53 @@ def holdings_block(extras):
     return "\n".join(lines)
 
 
+CRASH_NASDAQ = -3.0  # 나스닥이 하루 이만큼 이하로 내리면 급락일 경보
+CRASH_SOX = -5.0     # 반도체지수 기준
+
+
+def market_date(rows):
+    """주요 지수 일봉의 마지막 거래일(YYYY-MM-DD). 판독기 지표가 얼마나 묵었는지 비교하는 기준."""
+    ds = [r.get("date", "") for r in rows if r.get("name") in ("나스닥", "S&P500", "S&P 500", "필라델피아 반도체지수") and len(r.get("date", "")) == 10]
+    return max(ds) if ds else ""
+
+
+def big_move(rows, now):
+    """지수가 크게 움직인 날인지 (나스닥·S&P ±2% 또는 반도체 ±4%). 이런 날만 판독기에 '묵은 값' 경고를 붙인다
+    (풋/콜·하이일드는 원래 하루 늦게 나오므로, 평범한 날에 경고하면 매번 뜨는 소음이 된다)."""
+    for r in rows:
+        ch = r.get("change")
+        if ch is None or r.get("change_kind") != "pct" or is_old(r, now):
+            continue
+        lim = 4.0 if r["name"] == "필라델피아 반도체지수" else 2.0
+        if r["name"] in ("나스닥", "S&P500", "S&P 500", "필라델피아 반도체지수") and abs(ch) >= lim:
+            return True
+    return False
+
+
+def crash_block(rows, extras, now):
+    """나스닥·반도체지수가 크게 빠진 날, 시황 맨 위에 '오늘은 급락일' 안내를 붙인다."""
+    hit = []
+    for r in rows:
+        if r.get("change") is None or r.get("change_kind") != "pct" or is_old(r, now):
+            continue
+        if (r["name"] == "나스닥" and r["change"] <= CRASH_NASDAQ) or \
+           (r["name"] == "필라델피아 반도체지수" and r["change"] <= CRASH_SOX):
+            hit.append(r)
+    if not hit:
+        return None
+    others = [f"{r['name']} {r['change']:+.2f}%" for r in rows
+              if r["name"] in ("S&P500", "S&P 500", "다우", "다우존스", "VIX") and r.get("change") is not None and r.get("change_kind") == "pct"]
+    lines = ["<b>📉 급락일 알림</b> " + esc(" · ".join(f"{r['name']} {r['change']:+.2f}%" for r in hit) +
+                                          (" · " + " · ".join(others) if others else ""))]
+    fg = (extras or {}).get("stock_fg")
+    if fg:
+        lines.append(f"• 주식 공포탐욕(CNN) {fg['score']:.0f} (전일 {fg['prev_close']:.0f})")
+    lines += ["1. 이럴 때 먼저 볼 것: 공포탐욕지수 · VIX · 보유 종목의 200일선 대비 위치 (이동평균선 점검 칸)",
+              "2. 역발상 판독기의 일부 지표(풋/콜·하이일드·낙관/비관 설문·빚투)는 하루 이상 지난 값이라 급락이 아직 반영되지 않았을 수 있어요. 판독기 점수만 보고 판단하지 마세요.",
+              "3. 급락 직후에는 숫자가 하루 이틀 뒤에 따라 움직여요. 서두르기보다 내가 정해 둔 기준(분할 매수·손절 등)을 먼저 확인해 보세요."]
+    return "\n".join(lines)
+
+
 def alert_block(extras):
     """대사관 인력 철수·자국민 대피·여행경보 같은 안전 신호. 없으면 '없음'이라고 알려준다."""
     news = (extras or {}).get("news")
@@ -281,7 +328,8 @@ def week_block(extras):
         return None
     today = extras.get("today_ymd", "")
     items = [(e["ymd"], e["time"], event_text(e, star=False)) for e in extras.get("week_events") or []]
-    items += [(m["ymd"], "", event_text(m)) for m in extras.get("manual_events") or [] if m["ymd"] > today]
+    limit = (dt.datetime.strptime(today, "%Y-%m-%d") + dt.timedelta(days=10)).strftime("%Y-%m-%d") if today else "9999"
+    items += [(m["ymd"], "", event_text(m)) for m in extras.get("manual_events") or [] if today < m["ymd"] <= limit]
     earn = [e for e in extras.get("earnings") or [] if e["ymd"] > today]
     items += [(e["ymd"], "", earn_text(e)) for e in pick_earnings(earn, MAX_EARN_WEEK)]
     lines = ["<b>[이번 주·다음 주 체크]</b> 향후 10일, 중요 일정만 (지표·정책·발언은 한국시간, 실적은 미국 날짜)"]
@@ -467,7 +515,19 @@ def contrarian_caption(c):
     return f"역발상 판독기 {c['as_of'][5:7]}/{c['as_of'][8:10]} 기준 · 총점 {c['total']:.1f} {c['zone']} → {c['action']} ({c['count']}/5개 지표)"
 
 
-def contrarian_blocks(c):
+def stale_items(c, mdate):
+    """판독기 지표 중 기준일이 시장 마지막 거래일보다 오래된 매일/매주 지표(수동·월간 제외) 이름 목록."""
+    out = []
+    for it in (c or {}).get("items") or []:
+        d = it.get("date") or ""
+        if it.get("score") is None or it.get("manual") or len(d) != 10 or not mdate:
+            continue
+        if d < mdate and it.get("cycle") != "주간":
+            out.append(it["name"])
+    return out
+
+
+def contrarian_blocks(c, mdate=""):
     if not c or not c.get("items"):
         return []
     d = c.get("as_of", "")
@@ -476,6 +536,9 @@ def contrarian_blocks(c):
         head.append(f"총점: 집계 불가 (자동 수집된 지표가 {c.get('count', 0)}개뿐이라 3개 이상일 때만 계산)")
     else:
         head.append(f"총점 <b>{c['total']:.1f} · {esc(c['zone'])}</b> → 증시 매매 판단: <b>{esc(c['action'])}</b> ({c['count']}/5개 지표 반영)")
+    stale = stale_items(c, mdate)
+    if stale:
+        head.append(f"⚠ {esc(', '.join(stale))} 지표는 시장 마지막 거래일({esc(mdate[5:7] + '/' + mdate[8:10])})보다 하루 이상 지난 값이에요. 어제 같은 큰 변동은 아직 점수에 덜 반영됐을 수 있어요.")
     for n, it in enumerate(c["items"], 1):
         if it.get("score") is None:
             head.append(f"\n{n}. {esc(it['name'])} ({esc(it['cycle'])}) — 미수집 (자동 수집 실패)")
@@ -543,6 +606,9 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None
     blocks = [f"<b>아침 시황 | {now.month}월 {now.day}일({WEEKDAYS[now.weekday()]})</b>\n{now:%H:%M} KST 기준으로 모은 정보입니다."]
 
     rows = data["rows"]
+    cb = crash_block(rows, extras, now)
+    if cb:
+        blocks.append(cb)
     ab = alert_block(extras)
     if ab:
         blocks.append(ab)
@@ -582,7 +648,7 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None
     # 요약은 위에서 이미 넣었으므로 뉴스 목록만 붙인다
     if nb:
         blocks.append(nb[-1])
-    for b in (None if cal_ok else today_block(extras), None if cal_ok else week_block(extras), weekly_block(weekly), watch_block(watch), ma_block(ma), *contrarian_blocks(contrarian), cover_block(extras),
+    for b in (None if cal_ok else today_block(extras), None if cal_ok else week_block(extras), weekly_block(weekly), watch_block(watch), ma_block(ma), *contrarian_blocks(contrarian, market_date(rows) if big_move(rows, now) else ""), cover_block(extras),
               month_block(extras), reminder_block(extras)):
         if b:
             blocks.append(b)
