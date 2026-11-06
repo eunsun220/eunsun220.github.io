@@ -20,6 +20,9 @@ KST = dt.timezone(dt.timedelta(hours=9))
 WD = ["월", "화", "수", "목", "금", "토", "일"]
 MAX_EARN_DAY = 8  # 하루 칸에 보여줄 실적 발표 최대 개수 (넘으면 '외 N곳')
 
+# 며칠 동안 이어지는 기간(칸마다 넣기 어려운 것)은 '보는 법' 칸에 따로 보여준다: (이름, 시작, 끝, 설명)
+PERIODS = [("자사주 매입 재개 기간", "2026-10-30", "2026-12-14", "기업들이 자사주를 사들일 수 있는 기간 (수급에 우호적)")]
+
 BG = "#fbf7ee"
 KIND_COLORS = {"지표": ("#c8f0d2", "#1f7a3a"), "정책": ("#f9cdd2", "#a02a3a"), "실적": ("#bfeefb", "#0b6f8a"),
                "발언": ("#fff2a8", "#8a6d00"), "코인": ("#ffd8a8", "#9a5300"), "이벤트": ("#e3d6f7", "#5b3a99")}
@@ -63,11 +66,16 @@ def collect(ex):
             text += " · " + " / ".join(extra)
         add(e["ymd"], {"kind": kind, "time": e.get("time") or "", "text": text, "reason": reason,
                        "star": e.get("impact") == "High", "held": False})
+    earn_names = {}
+    for e in ex.get("earnings") or []:
+        earn_names.setdefault(e["ymd"], set()).add(e.get("name", ""))
     for m in ex.get("manual_events") or []:
         if m["ymd"] < today:
             continue
         kind = m.get("kind", "이벤트")
         text, reason = clean_title(m.get("title", ""))
+        if kind == "실적" and any(n and n in text for n in earn_names.get(m["ymd"], ())):
+            continue  # 자동 실적 일정에 같은 회사가 이미 있으면 직접 적은 '예상' 일정은 뺀다
         add(m["ymd"], {"kind": kind, "time": "", "text": text, "reason": reason,
                        "star": m.get("impact") == "High", "held": False})
     earn_by_day = {}
@@ -191,7 +199,7 @@ def draw_day(p, draw, x, y, w, h, date, evs, today, past):
     cx, cw = x + 96, w - 96 - 12
     cy = y + 10
     if not evs:
-        msg = "—" if past else ("휴장·주요 일정 없음" if date.weekday() >= 5 else "주요 일정 없음")
+        msg = "지난 날" if past else ("휴장·주요 일정 없음" if date.weekday() >= 5 else "주요 일정 없음")
         draw.text((cx + 4, cy + 14), msg, font=p.f_small, fill="#aaaaaa")
         return
     for ev in evs:
@@ -209,7 +217,7 @@ def render_week(p, monday, days, today, path, horizon_note):
     dates = [monday + dt.timedelta(days=i) for i in range(7)]
     left, right = dates[:4], dates[4:]
     hs = {d: day_box_height(p, probe, days.get(d.strftime("%Y-%m-%d"), []), inner) for d in dates}
-    legend_h = 210
+    legend_h = 270
     row_h = []
     for i in range(4):
         a = hs[left[i]]
@@ -249,6 +257,9 @@ def render_week(p, monday, days, today, path, horizon_note):
                          "★ = 중요도 높음 · 보유 = 내 보유 종목",
                          "빨간 테두리 = 오늘, 흐린 칸 = 지난 날",
                          horizon_note]
+                for nm, s0, s1, why in PERIODS:
+                    if s0 <= today.strftime("%Y-%m-%d") <= s1:
+                        notes.append(f"■ {nm} {s0[5:7].lstrip('0')}/{s0[8:].lstrip('0')}~{s1[5:7].lstrip('0')}/{s1[8:].lstrip('0')} 진행 중 — {why}")
                 yy = y + 56
                 for n in notes:
                     for ln in p.wrap(draw, n, p.f_small, colw - 44):
@@ -264,8 +275,59 @@ def render_week(p, monday, days, today, path, horizon_note):
     img.save(path)
 
 
+UPCOMING_DAYS = 60  # '다가오는 일정' 그림이 보여줄 기간 (오늘부터 며칠 앞까지)
+UPCOMING_MAX = 14   # 그림 한 장에 넣을 일정 최대 개수
+
+
+def upcoming_list(days, start, end, today):
+    """주간 그림에 안 나오는 먼 일정: [(date, event)] (코인 일정은 따로 많아서 뺀다)."""
+    out = []
+    for ymd in sorted(days):
+        d = dt.datetime.strptime(ymd, "%Y-%m-%d").date()
+        if not (start <= d <= end):
+            continue
+        for ev in days[ymd]:
+            if ev["kind"] == "코인":
+                continue
+            out.append((d, ev))
+    return out[:UPCOMING_MAX]
+
+
+def render_upcoming(p, items, today, path):
+    from PIL import Image, ImageDraw
+    W, M = 1200, 30
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    inner = W - 2 * M - 150 - 24
+    lays = [chip_layout(p, probe, ev, inner) for _, ev in items]
+    periods = [x for x in PERIODS if x[2] >= today.strftime("%Y-%m-%d")]
+    H = 130 + sum(max(lay["h"], 64) + 12 for lay in lays) + (60 + 34 * len(periods) if periods else 0) + 80
+    img = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(img)
+    draw.text((M, 22), "다가오는 주요 일정", font=p.f_title, fill="#222222")
+    draw.text((M, 84), "이번 주·다음 주 그림 다음에 오는 일정이에요 (코인 일정 제외, 날짜는 바뀔 수 있어요)", font=p.f_small, fill="#666666")
+    y = 130
+    for (d, ev), lay in zip(items, lays):
+        h = max(lay["h"], 64)
+        draw.rounded_rectangle([M, y, W - M, y + h], radius=12, fill="white", outline="#9a9a9a", width=2)
+        dd = (d - today).days
+        draw.rounded_rectangle([M + 8, y + 8, M + 118, y + h - 8], radius=10, fill="#38b6c4")
+        draw.text((M + 63, y + h // 2 - 12), f"{d.month}/{d.day}({WD[d.weekday()]})", font=p.f_wd, fill="white", anchor="mm")
+        draw.text((M + 63, y + h // 2 + 14), f"D-{dd}", font=p.f_tag, fill="white", anchor="mm")
+        draw_chip(p, draw, ev, lay, M + 130, y + (h - lay["h"]) // 2, inner)
+        y += h + 12
+    if periods:
+        y += 10
+        draw.text((M, y), "이어지는 기간", font=p.f_wd, fill="#444444")
+        y += 36
+        for nm, s0, s1, why in periods:
+            draw.text((M, y), f"■ {nm} {int(s0[5:7])}/{int(s0[8:])}~{int(s1[5:7])}/{int(s1[8:])} — {why}", font=p.f_small, fill="#555555")
+            y += 34
+    draw.text((M, H - 48), f"{dt.datetime.now(KST):%m/%d %H:%M} 기준 · 참고용입니다. 투자 판단은 본인이 합니다.", font=p.f_small, fill="#888888")
+    img.save(path)
+
+
 def main():
-    for f in ("calendar.json", "cal_1.png", "cal_2.png"):
+    for f in ("calendar.json", "cal_1.png", "cal_2.png", "cal_3.png"):
         if os.path.exists(f):
             os.remove(f)
     try:
@@ -284,13 +346,18 @@ def main():
         p = Painter()
         render_week(p, this_mon, days, today, "cal_1.png", "")
         images.append({"path": "cal_1.png", "caption": f"📅 이번 주 일정 ({this_mon.month}/{this_mon.day}~{(this_mon + dt.timedelta(days=6)).month}/{(this_mon + dt.timedelta(days=6)).day})"})
-        has_next = any(k >= next_mon.strftime("%Y-%m-%d") for k in days)
+        next_end = next_mon + dt.timedelta(days=6)
+        has_next = any(next_mon.strftime("%Y-%m-%d") <= k <= next_end.strftime("%Y-%m-%d") for k in days)
         if has_next:
             render_week(p, next_mon, days, today, "cal_2.png", "다음 주는 아직 확정되지 않은 일정이 더 있을 수 있어요")
             images.append({"path": "cal_2.png", "caption": f"📅 다음 주 일정 ({next_mon.month}/{next_mon.day}~{(next_mon + dt.timedelta(days=6)).month}/{(next_mon + dt.timedelta(days=6)).day})"})
+        far = upcoming_list(days, next_end + dt.timedelta(days=1), today + dt.timedelta(days=UPCOMING_DAYS), today)
+        if far:
+            render_upcoming(p, far, today, "cal_3.png")
+            images.append({"path": "cal_3.png", "caption": f"📅 다가오는 주요 일정 ({far[0][0].month}/{far[0][0].day}~{far[-1][0].month}/{far[-1][0].day})"})
     except Exception as e:
         failures.append({"name": "일정 달력 그림", "error": extras.err_text(e)})
-        for f in ("cal_1.png", "cal_2.png"):
+        for f in ("cal_1.png", "cal_2.png", "cal_3.png"):
             if os.path.exists(f):
                 os.remove(f)
         images = []
