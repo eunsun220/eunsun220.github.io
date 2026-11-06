@@ -283,7 +283,13 @@ def holding_match(title):
     low = title.lower()
     for h in HOLDINGS:
         for name in (h["ko"], h["en"]):
-            if name and name.lower() in low:
+            if not name:
+                continue
+            if name.isascii() and name.isupper() and len(name) <= 5:
+                # TAN·GDX 같은 짧은 영문 대문자 이름은 단어 그대로(대소문자 구분)일 때만 인정한다 (Tan Thanh 같은 엉뚱한 기사 방지)
+                if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", title):
+                    return True
+            elif name.lower() in low:
                 return True
         sym = h["symbol"]
         if re.fullmatch(r"[A-Za-z]{3,5}", sym) and re.search(rf"\b{sym.upper()}\b", title):
@@ -658,7 +664,10 @@ def econ_events(now):
     return [r for _, r in today], [r for _, r in week]
 
 
-def manual_events(now, econ_titles):
+MANUAL_HORIZON_DAYS = 60  # events.json 의 일정을 며칠 앞까지 가져올지 (달력의 '다가오는 일정' 그림용)
+
+
+def manual_events(now, econ_titles, econ_ymds=()):
     """events.json 에 직접 적어 둔 일정(중간선거, 국채 발행계획 등). 파일이 없으면 건너뜀."""
     try:
         with open("events.json", encoding="utf-8") as fp:
@@ -672,13 +681,14 @@ def manual_events(now, econ_titles):
         except (KeyError, ValueError, TypeError):
             continue
         title = str(m.get("title", "")).strip()
-        if m.get("kind") == "지표":
-            continue  # 경제지표는 경제 캘린더가 알려주므로 매일 일정에서는 뺀다(월말 다음 달 일정에는 보임)
-        if not title or not (now.date() <= d.date() <= (now + dt.timedelta(days=14)).date()):
+        if m.get("kind") == "지표" and m["date"] in econ_ymds:
+            continue  # 같은 날 경제 캘린더에 지표가 이미 있으면 중복 방지 (없으면 직접 적어 둔 지표 일정을 보여준다)
+        if not title or not (now.date() <= d.date() <= (now + dt.timedelta(days=MANUAL_HORIZON_DAYS)).date()):
             continue
         if "FOMC" in title and any("FOMC" in t for t in econ_titles):
             continue  # 경제 캘린더에 이미 있으면 중복 방지
-        out.append({"ymd": m["date"], "time": "", "title": title, "kind": m.get("kind") or "이벤트"})
+        out.append({"ymd": m["date"], "time": "", "title": title, "kind": m.get("kind") or "이벤트",
+                    "impact": m.get("impact")})
     out.sort(key=lambda x: x["ymd"])
     return out
 
@@ -953,7 +963,8 @@ def main():
         failures.append({"name": "경제지표 일정", "error": err_text(e)})
 
     titles = [e["title"] for e in out["today_events"] + out["week_events"]]
-    out["manual_events"] = manual_events(now, titles)
+    econ_ymds = {e["ymd"] for e in out["today_events"] + out["week_events"] if e.get("kind") == "지표"}
+    out["manual_events"] = manual_events(now, titles, econ_ymds)
     try:
         out["manual_events"] += ipo_events(now)
     except Exception as e:
