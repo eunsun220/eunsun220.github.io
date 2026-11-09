@@ -30,7 +30,7 @@ RATING_KO = {
     "extreme fear": "극단적 공포", "fear": "공포", "neutral": "중립",
     "greed": "탐욕", "extreme greed": "극단적 탐욕",
 }
-NEWS_ORDER = ["보유", "월가", "테크", "대형주", "AI", "피지컬AI", "상장·공급", "이슈", "금", "지정학", "정치", "코인", "보고서", "주요 뉴스"]
+NEWS_ORDER = ["보유", "월가", "테크", "대형주", "AI", "피지컬AI", "상장·공급", "이슈", "심리·수급", "금", "지정학", "정치", "코인", "보고서", "주요 뉴스"]
 
 
 def esc(s):
@@ -239,13 +239,13 @@ def news_blocks(extras):
     return blocks
 
 
-KIND_MARK = {"지표": "📊", "정책": "🏛", "발언": "🎤", "실적": "💼", "이벤트": "📌", "코인": "🪙"}
+KIND_MARK = {"지표": "📊", "정책": "🏛", "발언": "🎤", "실적": "💼", "이벤트": "📌", "코인": "🪙", "정치": "🗳"}
 MAX_EARN_WEEK = 30  # 이번 주 칸에 보여줄 실적 발표 최대 개수 (너무 길어지지 않게)
 # 개수가 넘칠 때 먼저 남겨 둘 주요 기업 (나머지는 날짜순으로 채움)
 PRIORITY_EARN = {"NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "TSM", "AMD", "INTC", "MU",
                  "ORCL", "PLTR", "NFLX", "CRM", "JPM", "GS", "WMT", "HD", "COST", "LLY", "UNH", "XOM", "BA",
                  "COIN", "MSTR", "ASML", "QCOM", "ANET", "SMCI", "VRT", "CRDO", "ARM", "ALAB", "COHR",
-                 "CEG", "VST", "BE", "GLW"}
+                 "CEG", "VST", "BE", "GLW", "RKLB", "PLUG", "CRWV", "RGTI", "NBIS", "CSCO", "AMAT", "OXY", "HIMS"}
 
 
 def pick_earnings(earn, limit):
