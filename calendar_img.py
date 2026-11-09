@@ -25,8 +25,8 @@ PERIODS = [("자사주 매입 재개 기간", "2026-10-30", "2026-12-14", "기�
 
 BG = "#fbf7ee"
 KIND_COLORS = {"지표": ("#c8f0d2", "#1f7a3a"), "정책": ("#f9cdd2", "#a02a3a"), "실적": ("#bfeefb", "#0b6f8a"),
-               "발언": ("#fff2a8", "#8a6d00"), "코인": ("#ffd8a8", "#9a5300"), "이벤트": ("#e3d6f7", "#5b3a99")}
-KIND_ORDER = ["정책", "지표", "실적", "발언", "코인", "이벤트"]
+               "발언": ("#fff2a8", "#8a6d00"), "코인": ("#ffd8a8", "#9a5300"), "이벤트": ("#e3d6f7", "#5b3a99"), "정치": ("#d3dcff", "#2f3f9a")}
+KIND_ORDER = ["정치", "정책", "지표", "실적", "발언", "코인", "이벤트"]
 
 
 # ---------------------------------------------------------------- 일정 모으기
@@ -235,7 +235,7 @@ def render_week(p, monday, days, today, path, horizon_note):
     draw.rounded_rectangle([M + 400, 28, M + 400 + tw + 40, 80], radius=12, fill="#bff0dc")
     draw.text((M + 420, 54), rng, font=p.f_pill, fill="#222222", anchor="lm")
     # 범례
-    lx = W - M - 640
+    lx = W - M - 720
     for k in KIND_ORDER:
         bg, fg = KIND_COLORS[k]
         wlab = draw.textlength(k, font=p.f_tag) + 22
