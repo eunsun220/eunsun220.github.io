@@ -246,6 +246,8 @@ WATCH = {
     "ABNB": "에어비앤비", "SHOP": "쇼피파이", "T": "AT&T", "VZ": "버라이즌", "TMUS": "T모바일",
     "VRT": "버티브", "ANET": "아리스타", "CEG": "컨스텔레이션에너지", "VST": "비스트라", "BE": "블룸에너지",
     "GLW": "코닝", "COHR": "코히런트", "CRDO": "크레도", "ALAB": "아스테라랩스",
+    "RKLB": "로켓랩", "PLUG": "플러그파워", "CRWV": "코어위브", "RGTI": "리게티", "NBIS": "네비우스",
+    "CSCO": "시스코", "OXY": "옥시덴탈", "HIMS": "힘스",
 }
 HOUR_LABEL = {"bmo": "장 전", "dmh": "장 중", "amc": "장 마감 후"}
 HOUR_ORDER = {"bmo": 0, "dmh": 1, "amc": 2}
@@ -544,6 +546,8 @@ def pick_with_ai(cands):
         cat = it.get("category") if it.get("category") in CATEGORIES else "월가"
         level = it.get("level") if it.get("level") in LEVEL_ORDER else "mid"
         title = clean_title(it.get("title") or src["title"])[:60]
+        if cat == "보유" and not src.get("holding"):
+            cat = "대형주"  # 내 보유 종목 기사가 아니면(AI가 잘못 분류) 보유 칸에 넣지 않는다
         if cat == "보유" and level == "low":
             continue  # 보유 종목은 중요한 소식만
         if cat == "보고서" and not REPORT_MONTHS.get(dt.datetime.now(KST).month):
