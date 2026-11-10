@@ -20,8 +20,8 @@ import extras  # HOLDINGS(내 종목)·HEADERS 를 그대로 가져다 쓴다
 
 KST = dt.timezone(dt.timedelta(hours=9))
 
-# 점검을 보내는 요일 (월=0 … 일=6). 수요일(2)과 토요일(5). 바꾸고 싶으면 숫자만 고치면 됩니다.
-RUN_DAYS = (2, 5)
+# 글 버전 점검을 보내는 요일 (월=0 … 일=6).
+RUN_DAYS = ()  # 평소에는 쉽니다. 평일 이격도·RSI 점검표(score_table.py)가 이 글을 대신합니다. 예전 글을 다시 받고 싶으면 (2, 5) 처럼 요일을 적으세요.
 
 INDICES = [("S&P500", "^GSPC"), ("나스닥", "^IXIC"), ("다우", "^DJI")]
 
