@@ -13,7 +13,7 @@ on:
         required: false
         default: "false"
       force_sections:
-        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, ma, gauge, watch, cover, monthend, monthly). 비워 두면 평소대로"
+        description: "시험용: 오늘이 아니어도 보고 싶은 코너를 쉼표로 적기 (weekly, ma, score, gauge, watch, cover, monthend, monthly). 비워 두면 평소대로"
         required: false
         default: ""
 
@@ -63,7 +63,7 @@ jobs:
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python weekly.py
 
-      - name: 수·토요일 이동평균선 점검
+      - name: 이동평균선 점검 (글 버전 · 평소엔 쉼, 시험할 때만)
         if: ${{ github.event.inputs.test_only != 'true' }}
         continue-on-error: true
         env:
@@ -86,6 +86,14 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python contrarian.py
+
+      - name: 평일 이격도·RSI 점검표 그림
+        if: ${{ github.event.inputs.test_only != 'true' }}
+        continue-on-error: true
+        env:
+          HOLDINGS: ${{ secrets.HOLDINGS }}
+          FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
+        run: python score_table.py
 
       - name: 일정 달력 그림 만들기
         if: ${{ github.event.inputs.test_only != 'true' }}
