@@ -213,8 +213,17 @@ ALERT_WHAT = re.compile(
     r"draw ?down|leave|suspend|clos|urge|raise|level 4|non-emergency|pull out", re.I)
 
 
+# 정기 갱신·여러 나라 한꺼번에 나오는 여행경보 목록은 '새 위험 신호'가 아니다 (대사관·자국민 이야기가 같이 없으면 거른다)
+ALERT_ROUTINE = re.compile(r"\d+\s*개국|갱신|renew|update[sd]? .*advisor", re.I)
+ALERT_EMBASSY = re.compile(r"대사관|영사관|공관|자국민|교민|외교관|embassy|consulate|diplomats", re.I)
+
+
+def is_routine_advisory(title):
+    return bool(ALERT_ROUTINE.search(title) and not ALERT_EMBASSY.search(title))
+
+
 def is_alert(title):
-    return bool(ALERT_WHO.search(title) and ALERT_WHAT.search(title))
+    return bool(ALERT_WHO.search(title) and ALERT_WHAT.search(title)) and not is_routine_advisory(title)
 
 
 FEEDS = HOLD_FEEDS + PEOPLE_FEEDS + MEGA_FEEDS + SUPPLY_FEEDS + AI_FEEDS + TOPIC_FEEDS + [
@@ -284,6 +293,9 @@ def err_text(e):
     return type(e).__name__ + (f" (HTTP {code})" if code else "")
 
 
+STOCK_HINT = re.compile(r"주가|주식|증시|실적|목표가|투자의견|매수|매도|공시|배당|ETF|나스닥|뉴욕|NYSE|상장|급등|급락|분기|월가|애널리스트|시총", re.I)
+
+
 def holding_match(title):
     """기사 제목에 내 보유 종목 이름(또는 티커)이 실제로 들어 있는지. 검색에 딸려 온 엉뚱한 기사를 거른다."""
     low = title.lower()
@@ -295,6 +307,12 @@ def holding_match(title):
                 # TAN·GDX 같은 짧은 영문 대문자 이름은 단어 그대로(대소문자 구분)일 때만 인정한다 (Tan Thanh 같은 엉뚱한 기사 방지)
                 if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", title):
                     return True
+            elif not name.isascii() and len(name) <= 3:
+                # '레나' 같은 짧은 한글 이름: 다른 단어 속에 끼어 있으면('에페글레나타이드') 인정하지 않고,
+                # 2글자 이름은 주식 이야기라는 단서(주가·실적·영문 이름 등)도 같이 있어야 인정한다 (모델 '레나' 기사 방지)
+                if re.search(rf"(?<![가-힣]){re.escape(name)}", title):
+                    if len(name) >= 3 or STOCK_HINT.search(title) or (h["en"] and h["en"].lower() in low):
+                        return True
             elif name.lower() in low:
                 return True
         sym = h["symbol"]
@@ -333,6 +351,10 @@ def parse_feed(name, url, now, hours=NEWS_HOURS):
                 ts = None
         if ts and (now - ts) > dt.timedelta(hours=hours):
             continue
+        if ts is None and "news.google.com" in url:
+            continue  # 구글뉴스에서 발행 시각을 모르는 기사는 오래된 기사일 수 있어 뺀다
+        if ts and ts > now + dt.timedelta(hours=2):
+            continue  # 미래 시각으로 찍힌 이상한 기사도 뺀다
         out.append({"title": title, "url": link, "source": source.strip(), "ts": ts,
                     "person": name.startswith("인물-"), "holding": name.startswith("보유-"), "alert": is_alert(title),
                     "topic": name.startswith(("공급-", "AI-"))})
@@ -473,13 +495,14 @@ def build_prompt(cands, mkt):
         return t
 
     lines = "\n".join(f"{i}|{tags(c)}{c['source']}|{c['title']}" for i, c in enumerate(cands, 1))
-    return f"""너는 미국 주식·금·비트코인에 투자하는 사람을 위한 아침 뉴스 편집자다.
+    return f"""너는 미국 주식·금·비트코인에 투자하는 사람을 위한 아침 뉴스 편집자다. 오늘 날짜는 {dt.datetime.now(KST):%Y-%m-%d}이다.
 아래는 밤사이 모은 뉴스 제목 목록이다. 각 줄 형식은 "번호|출처|제목"이다. 출처 앞의 [인물]은 유명 인물의 발언·행보를 따라가는 검색에서 나온 기사, [경보]는 대사관 인력 철수·자국민 대피·여행경보 관련 기사라는 뜻이다. 영어 제목도 있다.
 
 규칙
 1. 미국 증시, 금, 비트코인·암호화폐 시장에 영향을 줄 만한 기사만 최대 {MAX_PICK}개 고른다.
    연예, 스포츠, 사건사고, 국내 정치 가십 등 관련 없는 기사는 버린다.
 2. 같은 사건을 다룬 기사는 하나만 고른다.
+   이미 1주일 넘게 지난 사건(예: 한참 전에 발표된 분기 실적, 지난달 사건)을 다시 정리한 재탕·사후 분석 기사는 새 소식이 아니므로 버린다. 제목에 "지난달"·"지난주"처럼 지난 일을 돌아보는 표현이 중심이거나, 오늘 날짜에 비해 오래된 사건이 분명하면 고르지 않는다. 오늘 새로 나온 발표·발언·수치만 고른다.
 3. category는 {", ".join(f'"{c}"' for c in CATEGORIES)} 중 하나다. 기준과 최대 개수는 아래와 같다.
    - 보유(최대 6, 엄격하게): [보유] 표시가 붙은 기사 중 주가를 실제로 움직일 만한 주요 소식만. 해당 기업 CEO·주요 인사의 발언, 내부자·기관·유명 투자자의 눈에 띄는 매수·매도, EPS 추정치 상향·하향, 목표주가 변경, 실적·가이던스, 인수합병·대형 계약·규제·소송. 아래는 모두 제외한다: 단순 주가 등락 기사, "오를까?" 같은 전망 칼럼, 종목 추천·순위 모음, 투자 블로그성 글, 같은 내용의 반복 기사. 애매하면 고르지 않는다. 고른 기사는 level을 "high" 또는 "mid"로만 쓴다. title에 회사 이름을 꼭 넣는다. [보유] 기사는 다른 분류와 겹쳐도 "보유"로 분류하고, 같은 사건을 월가·테크·대형주 등 다른 분류에 또 넣지 않는다. 제목에 해당 기업 이름이 없는 기사는 [보유] 표시가 있어도 "보유"로 분류하지 않는다.
    - 월가(최대 4): 버핏, 하워드 막스, 폴 튜더 존스, 켄 그리핀, 스콧 루브너·럽너(시타델 주식 전략 총괄), 프레드 윌슨, 댄 아이브스, 드러켄밀러, 빌 애크먼, 마크 미너비니, 레오폴드 아셴브레너, 톰 리, 모건스탠리 같은 유명 투자자·애널리스트·금융사의 발언·매매·전망. 시장 마감 시황 기사는 최대 2개만.
@@ -554,7 +577,7 @@ def pick_with_ai(cands):
             cat = "이슈"  # 보고서 시기가 아닐 때는 일반 이슈로 보낸다 (엉뚱한 보고서 기사 방지)
             it = {k: v for k, v in it.items() if k != "implication"}
         row = {"category": cat, "title": title, "url": src["url"], "source": src["source"], "level": level}
-        if src.get("alert") or it.get("safety") is True:  # 안전 신호는 분류·중요도를 코드가 고정한다
+        if src.get("alert") or (it.get("safety") is True and not is_routine_advisory(src["title"])):  # 안전 신호는 분류·중요도를 코드가 고정한다
             row.update({"category": "지정학", "level": "high", "alert": True})
         if cat in IMPL_CATS and it.get("implication"):
             row["implication"] = str(it["implication"]).strip()[:120]
