@@ -118,6 +118,22 @@ def fear_greed_lines(rows, extras):
     return out
 
 
+# 큰 변동 종목에 직접 기사가 없을 때, 이미 뽑아 둔 뉴스에서 원인이 될 만한 것을 이어 붙인다 (종목 → 뉴스 분류)
+MOVER_LINK = {"GDX": ["금"], "GLD": ["금"], "MSTR": ["코인"], "TAN": ["이슈", "정치"], "스트래티지": ["코인"]}
+
+
+def linked_news(h, extras, have):
+    news = ((extras or {}).get("news") or {}).get("items") or []
+    cats = MOVER_LINK.get(h.get("sym", "")) or MOVER_LINK.get(h["name"]) or []
+    out = []
+    for it in news:
+        if it.get("alert") or it["url"] in have:
+            continue
+        if it["category"] in cats or (h["name"] in it["title"]):
+            out.append({"title": it["title"], "url": it["url"], "linked": True})
+    return out[:2 - len(have)] if len(have) < 2 else []
+
+
 def holdings_block(extras):
     q = (extras or {}).get("holdings")
     if not q:
@@ -139,10 +155,13 @@ def holdings_block(extras):
         if not h.get("big"):
             continue
         lines.append(f"\n⚠ {esc(h['name'])} {h['change']:+.1f}% 큰 변동 — 관련 기사")
-        for n in h.get("news") or []:
+        shown = list(h.get("news") or [])
+        shown += linked_news(h, extras, {n["url"] for n in shown})
+        shown = shown[:2]
+        for n in shown:
             url = html.escape(n["url"], quote=True)
             lines.append(f'• <a href="{url}">{esc(n["title"])}</a>')
-        if not h.get("news"):
+        if not shown:
             lines.append("• 관련 기사를 찾지 못했습니다")
     return "\n".join(lines)
 
