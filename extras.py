@@ -214,7 +214,7 @@ ALERT_WHAT = re.compile(
 
 
 # 정기 갱신·여러 나라 한꺼번에 나오는 여행경보 목록은 '새 위험 신호'가 아니다 (대사관·자국민 이야기가 같이 없으면 거른다)
-ALERT_ROUTINE = re.compile(r"\d+\s*개국|갱신|renew|update[sd]? .*advisor", re.I)
+ALERT_ROUTINE = re.compile(r"\d+\s*개국|여러\s*나라|갱신|renew|update[sd]? .*advisor|\d+\s*(countries|nations)|(countries|nations).{0,40}(advisor|level\s*[1-4]|do not travel)|travel advisories", re.I)
 ALERT_EMBASSY = re.compile(r"대사관|영사관|공관|자국민|교민|외교관|embassy|consulate|diplomats", re.I)
 
 
@@ -905,10 +905,16 @@ def economist_cover(now):
 BIG_MOVE = 5.0  # 전일 대비 이 % 이상 움직인 보유 종목은 원인을 찾을 수 있게 관련 기사도 붙인다
 
 
+MOVER_REASON = re.compile(r"주가|급등|급락|상승|하락|폭락|폭등|반등|목표가|목표주가|투자의견|실적|가이던스|전망|소송|조사|규제|제재|수출|관세|금리|유가|금값|금 가격|환율|매도|매수|순매|공매도|지수|편출|편입|MSCI|합병|인수|공급|계약|승인|리콜|감산|증산|배당|증자|상장|가격|stock|shares|price|earnings|guidance|downgrade|upgrade|lawsuit|probe", re.I)
+MOVER_NOISE = re.compile(r"채용|인사|임원|승진|행사|이벤트|프로모션|할인|후기|맛집|캠페인|기부|봉사|협약식|세미나|포럼|수상|표창|학력|복지|성과급")
+
+
 def mover_news(h, now):
+    """큰 변동 종목의 관련 기사. 주가가 움직일 만한 이유(실적·전망·규제·수급 등)가 제목에 있는 기사만 남기고 채용·행사 같은 기사는 뺀다."""
     terms = [f'"{h["ko"]}"'] + ([f'"{h["en"]}"'] if h["en"] else [])
     url = gnews("(" + " OR ".join(terms) + ")", "ko", days=3)
-    items = [i for i in parse_feed("보유-변동", url, now, 72) if holding_match(i["title"])][:2]
+    items = [i for i in parse_feed("보유-변동", url, now, 72) if holding_match(i["title"])]
+    items = [i for i in items if MOVER_REASON.search(i["title"]) and not MOVER_NOISE.search(i["title"])][:2]
     return [{"title": clip(i["title"], 70), "url": i["url"]} for i in items]
 
 
@@ -952,7 +958,7 @@ def holdings_quotes(now):
             r.raise_for_status()
             is_kr = h["symbol"].upper().endswith((".KS", ".KQ"))
             chg, day = quote_change(r.json()["chart"]["result"][0], now, is_kr)
-            row = {"name": h["ko"], "change": chg, "date": day, "kr": is_kr}
+            row = {"name": h["ko"], "sym": h["symbol"], "change": chg, "date": day, "kr": is_kr}
             if abs(chg) >= BIG_MOVE:
                 row["big"] = True
                 try:
