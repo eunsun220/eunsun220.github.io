@@ -97,6 +97,25 @@ def analyze(bars):
             "best_gap": BEST_LO <= d <= BEST_HI, "buy_rsi": r < RSI_BUY, "deep": d <= DEEP}
 
 
+def drop_open_bar(bars, sym, now):
+    """아직 장이 끝나지 않은(진행 중인) 마지막 일봉은 뺀다. 종가가 아닌 중간 가격으로 계산하면 숫자가 틀리고 날짜 표시도 어긋난다."""
+    if len(bars) < 2:
+        return bars
+    last_date = bars[-1][0]
+    if sym.upper().endswith(".KS"):  # 한국장: 15:30 마감
+        k = now.astimezone(KST)
+        if last_date == k.strftime("%Y-%m-%d") and (k.hour, k.minute) < (15, 40):
+            return bars[:-1]
+    elif sym.upper() == "BTC-USD":  # 코인: 하루가 UTC 기준이라 오늘 날짜 봉은 진행 중
+        if last_date == now.astimezone(dt.timezone.utc).strftime("%Y-%m-%d"):
+            return bars[:-1]
+    else:  # 미국장: 동부시간 16:00 마감 (서머타임 여부는 -4/-5시간 중 늦은 쪽으로 넉넉히 본다)
+        et = now.astimezone(dt.timezone(dt.timedelta(hours=-5)))
+        if last_date == et.strftime("%Y-%m-%d") and et.hour < 17:
+            return bars[:-1]
+    return bars
+
+
 def note_of(row):
     notes = []
     if row["best_gap"] and row["buy_rsi"]:
@@ -238,7 +257,7 @@ def main():
     for name, sym in items:
         try:
             extras.time.sleep(0.3)
-            row = analyze(ma_signals.fetch_closes(sym))
+            row = analyze(drop_open_bar(ma_signals.fetch_closes(sym), sym, now))
             row.update({"name": name, "symbol": sym})
             rows.append(row)
         except Exception:
@@ -247,13 +266,15 @@ def main():
     if no_data:
         result["failures"].append({"name": "이격도·RSI 계산 실패", "error": f"{no_data}개 종목"})
     if rows:
-        us = [r["date"] for r in rows if not r["symbol"].endswith(".KS")]
+        us = [r["date"] for r in rows if not r["symbol"].endswith(".KS") and r["symbol"] != "BTC-USD"]
         kr = [r["date"] for r in rows if r["symbol"].endswith(".KS")]
         parts = []
         if us:
             parts.append(f"미국 {max(us)[5:].replace('-', '/')}")
         if kr:
             parts.append(f"한국 {max(kr)[5:].replace('-', '/')}")
+        if any(r["symbol"] == "BTC-USD" for r in rows):
+            parts.append("비트코인 " + max(r["date"] for r in rows if r["symbol"] == "BTC-USD")[5:].replace("-", "/"))
         asof = " · ".join(parts) + " 종가 기준 · 200일선 이격도와 RSI(14)를 1(공포)~5(광기)점으로 매깁니다"
         try:
             render(rows, "score_table.png", asof)
