@@ -836,6 +836,10 @@ def main():
             if si.get("image") and os.path.exists(si["image"]):
                 time.sleep(1.5)
                 send_photo(token, chat_id, si["image"], si.get("caption", ""))
+    br = load("breadth.json")  # 화·목: 시장 체력(50일·200일선 위 종목 비율) 그림 — 점검표 다음
+    if br and str(br.get("generated_at", ""))[:10] == today and br.get("image") and os.path.exists(br["image"]):
+        time.sleep(1.5)
+        send_photo(token, chat_id, br["image"], br.get("caption", ""))
     chunks = split_blocks(build_blocks(data, extras, weekly, ma, con, wt, cal_ok=bool(cal_imgs), cal=cal))
     failed = 0
     for i, chunk in enumerate(chunks):
