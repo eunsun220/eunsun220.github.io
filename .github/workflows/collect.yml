@@ -92,6 +92,7 @@ jobs:
         continue-on-error: true
         env:
           HOLDINGS: ${{ secrets.HOLDINGS }}
+          SCORE_HOLDINGS: ${{ secrets.SCORE_HOLDINGS }}
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
         run: python score_table.py
 
