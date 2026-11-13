@@ -829,9 +829,13 @@ def main():
     cap = contrarian_caption(con)
     if con and cap and con.get("image") and os.path.exists(con["image"]):
         send_photo(token, chat_id, con["image"], cap)  # 월·수·금요일: 판독기 그림을 먼저 보낸다
-    if sc and str(sc.get("generated_at", ""))[:10] == today and sc.get("image") and os.path.exists(sc["image"]):
-        time.sleep(1.5)
-        send_photo(token, chat_id, sc["image"], sc.get("caption", ""))  # 평일: 이격도·RSI 점검표 그림 (판독기 그림 다음)
+    if sc and str(sc.get("generated_at", ""))[:10] == today:
+        # 평일: 이격도·RSI 점검표 그림 (판독기 그림 다음). 보유종목 표 → 관심종목 표 순서로, 있는 것만 보낸다.
+        score_imgs = sc.get("images") or ([{"image": sc["image"], "caption": sc.get("caption", "")}] if sc.get("image") else [])
+        for si in score_imgs:
+            if si.get("image") and os.path.exists(si["image"]):
+                time.sleep(1.5)
+                send_photo(token, chat_id, si["image"], si.get("caption", ""))
     chunks = split_blocks(build_blocks(data, extras, weekly, ma, con, wt, cal_ok=bool(cal_imgs), cal=cal))
     failed = 0
     for i, chunk in enumerate(chunks):
