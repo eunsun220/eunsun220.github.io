@@ -218,8 +218,14 @@ ALERT_ROUTINE = re.compile(r"\d+\s*개국|여러\s*나라|갱신|renew|update[sd
 ALERT_EMBASSY = re.compile(r"대사관|영사관|공관|자국민|교민|외교관|embassy|consulate|diplomats", re.I)
 
 
+# 스포츠 대회 참가·철수 소식은 시장 안전 신호가 아니다 (대사관·자국민 이야기가 같이 없으면 거른다)
+ALERT_SPORTS = re.compile(r"월드컵|올림픽|아시안게임|축구|농구|야구|선수단|국가대표|대회|U-?\d{2}|world cup|olympic|fifa|tournament|soccer|football|basketball|squad", re.I)
+
+
 def is_routine_advisory(title):
-    return bool(ALERT_ROUTINE.search(title) and not ALERT_EMBASSY.search(title))
+    if ALERT_EMBASSY.search(title):
+        return False
+    return bool(ALERT_ROUTINE.search(title) or ALERT_SPORTS.search(title))
 
 
 def is_alert(title):
@@ -296,29 +302,33 @@ def err_text(e):
 STOCK_HINT = re.compile(r"주가|주식|증시|실적|목표가|투자의견|매수|매도|공시|배당|ETF|나스닥|뉴욕|NYSE|상장|급등|급락|분기|월가|애널리스트|시총", re.I)
 
 
+def match_one(h, title):
+    """기사 제목에 보유 종목 '하나'(h)의 이름(또는 티커)이 실제로 들어 있는지."""
+    low = title.lower()
+    for name in (h["ko"], h["en"]):
+        if not name:
+            continue
+        if name.isascii() and name.isupper() and len(name) <= 5:
+            # TAN·GDX 같은 짧은 영문 대문자 이름은 단어 그대로(대소문자 구분)일 때만 인정한다 (Tan Thanh 같은 엉뚱한 기사 방지)
+            if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", title):
+                return True
+        elif not name.isascii() and len(name) <= 3:
+            # '레나' 같은 짧은 한글 이름: 다른 단어 속에 끼어 있으면('에페글레나타이드') 인정하지 않고,
+            # 2글자 이름은 주식 이야기라는 단서(주가·실적·영문 이름 등)도 같이 있어야 인정한다 (모델 '레나' 기사 방지)
+            if re.search(rf"(?<![가-힣]){re.escape(name)}", title):
+                if len(name) >= 3 or STOCK_HINT.search(title) or (h["en"] and h["en"].lower() in low):
+                    return True
+        elif name.lower() in low:
+            return True
+    sym = h["symbol"]
+    if re.fullmatch(r"[A-Za-z]{3,5}", sym) and re.search(rf"\b{sym.upper()}\b", title):
+        return True
+    return False
+
+
 def holding_match(title):
     """기사 제목에 내 보유 종목 이름(또는 티커)이 실제로 들어 있는지. 검색에 딸려 온 엉뚱한 기사를 거른다."""
-    low = title.lower()
-    for h in HOLDINGS:
-        for name in (h["ko"], h["en"]):
-            if not name:
-                continue
-            if name.isascii() and name.isupper() and len(name) <= 5:
-                # TAN·GDX 같은 짧은 영문 대문자 이름은 단어 그대로(대소문자 구분)일 때만 인정한다 (Tan Thanh 같은 엉뚱한 기사 방지)
-                if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", title):
-                    return True
-            elif not name.isascii() and len(name) <= 3:
-                # '레나' 같은 짧은 한글 이름: 다른 단어 속에 끼어 있으면('에페글레나타이드') 인정하지 않고,
-                # 2글자 이름은 주식 이야기라는 단서(주가·실적·영문 이름 등)도 같이 있어야 인정한다 (모델 '레나' 기사 방지)
-                if re.search(rf"(?<![가-힣]){re.escape(name)}", title):
-                    if len(name) >= 3 or STOCK_HINT.search(title) or (h["en"] and h["en"].lower() in low):
-                        return True
-            elif name.lower() in low:
-                return True
-        sym = h["symbol"]
-        if re.fullmatch(r"[A-Za-z]{3,5}", sym) and re.search(rf"\b{sym.upper()}\b", title):
-            return True
-    return False
+    return any(match_one(h, title) for h in HOLDINGS)
 
 
 def norm(title):
@@ -355,7 +365,10 @@ def parse_feed(name, url, now, hours=NEWS_HOURS):
             continue  # 구글뉴스에서 발행 시각을 모르는 기사는 오래된 기사일 수 있어 뺀다
         if ts and ts > now + dt.timedelta(hours=2):
             continue  # 미래 시각으로 찍힌 이상한 기사도 뺀다
-        out.append({"title": title, "url": link, "source": source.strip(), "ts": ts,
+        source = source.strip()
+        if re.search(r"brand icon|icon image", source, re.I):
+            source = "구글뉴스"  # 출처 자리에 엉뚱한 안내 문구가 들어온 경우
+        out.append({"title": title, "url": link, "source": source, "ts": ts,
                     "person": name.startswith("인물-"), "holding": name.startswith("보유-"), "alert": is_alert(title),
                     "topic": name.startswith(("공급-", "AI-"))})
     out.sort(key=lambda x: x["ts"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
@@ -913,7 +926,7 @@ def mover_news(h, now):
     """큰 변동 종목의 관련 기사. 주가가 움직일 만한 이유(실적·전망·규제·수급 등)가 제목에 있는 기사만 남기고 채용·행사 같은 기사는 뺀다."""
     terms = [f'"{h["ko"]}"'] + ([f'"{h["en"]}"'] if h["en"] else [])
     url = gnews("(" + " OR ".join(terms) + ")", "ko", days=3)
-    items = [i for i in parse_feed("보유-변동", url, now, 72) if holding_match(i["title"])]
+    items = [i for i in parse_feed("보유-변동", url, now, 72) if match_one(h, i["title"])]  # 이 종목 이야기인 기사만 (다른 보유 종목 기사는 뺀다)
     items = [i for i in items if MOVER_REASON.search(i["title"]) and not MOVER_NOISE.search(i["title"])][:2]
     return [{"title": clip(i["title"], 70), "url": i["url"]} for i in items]
 
