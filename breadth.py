@@ -56,22 +56,58 @@ def score(p):
     return 1
 
 
-def page_text(url):
-    r = requests.get(url, headers=HEAD, timeout=30)
-    raw = r.text
+def _clean(raw):
     t = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
     t = re.sub(r"<[^>]+>", " ", t)
-    t = re.sub(r"\s+", " ", html.unescape(t))
-    # 진단: 못 읽었을 때 원인을 알 수 있게 짧은 정보를 로그에 남긴다 (페이지 내용 일부일 뿐, 개인정보 없음)
-    m = re.search(r"(?is)<title>(.*?)</title>", raw)
-    blocked = re.findall(r"(?i)captcha|cloudflare|access denied|verify you are|enable javascript|robot", raw)[:3]
-    print(f"[진단] {url.split('/')[-1]} 상태 {r.status_code} · HTML {len(raw):,}자 · 글자 {len(t):,}자 · 제목 "
-          f"{(m.group(1).strip()[:60] if m else '없음')} · 차단표시 {blocked or '없음'} · "
-          f"'Market Average' {'있음' if 'market average' in t.lower() else '없음'} · "
-          f"'S&P 500 Index' {'있음' if 'S&P 500 Index' in t else '없음'} · 퍼센트 {len(re.findall(r'%', t))}개")
-    print("[진단] 글 앞부분:", t[:200])
-    r.raise_for_status()
-    return t
+    return re.sub(r"\s+", " ", html.unescape(t))
+
+
+def _diag(tag, status, raw_len, t, extra=""):
+    print(f"[진단] {tag} 상태 {status} · 글자 {raw_len:,}자 · 'Market Average' {'있음' if 'market average' in t.lower() else '없음'}"
+          f" · 'S&P 500 Index' {'있음' if 'S&P 500 Index' in t else '없음'} · 퍼센트 {t.count('%')}개 {extra}")
+    if "robot" in t.lower() or len(t) < 500:
+        print("[진단] 글 앞부분:", t[:160])
+
+
+def browser_text(url, ready):
+    """바차트는 '로봇 확인(자바스크립트)' 화면을 보여주므로, 진짜 브라우저(playwright)로 열어서 표가 뜰 때까지 기다린다"""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-blink-features=AutomationControlled"])
+        ctx = b.new_context(user_agent=extras.BROWSER_UA, viewport={"width": 1400, "height": 1000}, locale="en-US")
+        page = ctx.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                page.wait_for_function("(k) => document.body && document.body.innerText.includes(k)", arg=ready, timeout=60000)
+            except Exception:
+                pass
+            for _ in range(8):  # 아래쪽 표(러셀·나스닥)는 스크롤해야 뜰 수 있다
+                page.mouse.wheel(0, 1800)
+                page.wait_for_timeout(700)
+            page.wait_for_timeout(1500)
+            return re.sub(r"\s+", " ", page.inner_text("body"))
+        finally:
+            b.close()
+
+
+def page_text(url, ready):
+    t = ""
+    try:
+        r = requests.get(url, headers=HEAD, timeout=30)
+        t = _clean(r.text)
+        _diag(url.split("/")[-1] + " (일반 접속)", r.status_code, len(r.text), t)
+    except Exception as e:
+        print("[진단] 일반 접속 실패:", extras.err_text(e))
+    if ready.lower() in t.lower():
+        return t
+    try:  # 로봇 확인에 막혔으면 브라우저로 다시
+        t2 = browser_text(url, ready)
+        _diag(url.split("/")[-1] + " (브라우저)", 200, len(t2), t2)
+        return t2
+    except Exception as e:
+        print("[진단] 브라우저 접속 실패:", extras.err_text(e))
+        return t
 
 
 def find_row(text, names, start=0):
@@ -101,14 +137,14 @@ def read_momentum(text):
 def collect():
     fails, data = [], {}
     try:
-        data["mom"] = read_momentum(page_text(URL_MOM))
+        data["mom"] = read_momentum(page_text(URL_MOM, "Market Average"))
         if not data["mom"]:
             fails.append("momentum 페이지에서 Market Average 표를 못 찾음")
     except Exception as e:
         data["mom"] = None
         fails.append("momentum 접속 실패: " + extras.err_text(e))
     try:
-        t = page_text(URL_PERF)
+        t = page_text(URL_PERF, "S&P 500 Index")
     except Exception as e:
         t = ""
         fails.append("market-performance 접속 실패: " + extras.err_text(e))
