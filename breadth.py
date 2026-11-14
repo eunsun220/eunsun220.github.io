@@ -58,10 +58,20 @@ def score(p):
 
 def page_text(url):
     r = requests.get(url, headers=HEAD, timeout=30)
-    r.raise_for_status()
-    t = re.sub(r"(?is)<(script|style).*?</\1>", " ", r.text)
+    raw = r.text
+    t = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
     t = re.sub(r"<[^>]+>", " ", t)
-    return re.sub(r"\s+", " ", html.unescape(t))
+    t = re.sub(r"\s+", " ", html.unescape(t))
+    # 진단: 못 읽었을 때 원인을 알 수 있게 짧은 정보를 로그에 남긴다 (페이지 내용 일부일 뿐, 개인정보 없음)
+    m = re.search(r"(?is)<title>(.*?)</title>", raw)
+    blocked = re.findall(r"(?i)captcha|cloudflare|access denied|verify you are|enable javascript|robot", raw)[:3]
+    print(f"[진단] {url.split('/')[-1]} 상태 {r.status_code} · HTML {len(raw):,}자 · 글자 {len(t):,}자 · 제목 "
+          f"{(m.group(1).strip()[:60] if m else '없음')} · 차단표시 {blocked or '없음'} · "
+          f"'Market Average' {'있음' if 'market average' in t.lower() else '없음'} · "
+          f"'S&P 500 Index' {'있음' if 'S&P 500 Index' in t else '없음'} · 퍼센트 {len(re.findall(r'%', t))}개")
+    print("[진단] 글 앞부분:", t[:200])
+    r.raise_for_status()
+    return t
 
 
 def find_row(text, names, start=0):
