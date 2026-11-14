@@ -101,7 +101,13 @@ jobs:
         continue-on-error: true
         env:
           FORCE_SECTIONS: ${{ github.event.inputs.force_sections }}
-        run: python breadth.py
+        run: |
+          D=$(TZ=Asia/Seoul date +%u)
+          if [ "$D" = "2" ] || [ "$D" = "4" ] || echo "$FORCE_SECTIONS" | grep -q breadth; then
+            pip install playwright
+            playwright install --with-deps chromium
+          fi
+          python breadth.py
 
       - name: 일정 달력 그림 만들기
         if: ${{ github.event.inputs.test_only != 'true' }}
