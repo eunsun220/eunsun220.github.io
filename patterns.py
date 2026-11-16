@@ -16,8 +16,8 @@ import numpy as np
 KST = dt.timezone(dt.timedelta(hours=9))
 RUN_DAYS = (5,)   # 토요일. 숫자만 고치면 바뀝니다. (월0 화1 수2 목3 금4 토5 일6)
 PER_IMG = 9       # 그림 한 장에 넣는 종목 수 (텔레그램이 큰 그림을 줄이므로 너무 길면 글씨가 작아진다)
-SWING_LO, SWING_HI = 0.05, 0.12   # 고점·저점으로 치는 최소 움직임: 종목의 흔들림에 따라 5~12% 사이에서 정한다
-LOOK = 300        # 고점·저점을 찾는 기간(거래일)
+SWING_LO, SWING_HI = 0.04, 0.12   # 고점·저점으로 치는 최소 움직임: 종목의 흔들림에 따라 4~12% 사이에서 정한다
+LOOK = 400        # 이 기간(거래일) 안의 고점·저점으로 모양을 판단한다 (부족하면 더 예전 것도 쓴다)
 SHOW = 250        # 그림에 보여주는 기간(약 1년)
 
 
@@ -80,18 +80,18 @@ def analyze(closes, pct=None):
     c = np.asarray(closes, float)
     pct = pct or swing_of(c)
     n = len(c)
-    start = max(0, n - LOOK)
-    w = c[start:]
-    piv, trend, ext = zigzag(w, pct)
-    if piv and piv[0][0] == 0 and start > 0:   # 기간 맨 앞 가장자리는 진짜 꺾임점이 아니다
-        piv = piv[1:]
-    highs = [(start + i, w[i], False) for i, t in piv if t == "H"]
-    lows = [(start + i, w[i], False) for i, t in piv if t == "L"]
+    # 꺾임점은 가진 기록 전체에서 찾는다. 맨 처음 것은 시작 가장자리에서 생긴 가짜라 버린다.
+    piv, trend, ext = zigzag(c, pct)
+    piv = piv[1:]
+    allh = [(i, c[i], False) for i, t in piv if t == "H"]
+    alll = [(i, c[i], False) for i, t in piv if t == "L"]
     # 아직 꺾이지 않은 마지막 구간: 직전 고점(저점)을 이미 넘었을 때만 인정한다
-    if trend == 1 and highs and w[ext] > highs[-1][1]:
-        highs.append((start + ext, w[ext], True))
-    if trend == -1 and lows and w[ext] < lows[-1][1]:
-        lows.append((start + ext, w[ext], True))
+    if trend == 1 and allh and c[ext] > allh[-1][1]:
+        allh.append((ext, c[ext], True))
+    if trend == -1 and alll and c[ext] < alll[-1][1]:
+        alll.append((ext, c[ext], True))
+    recent = lambda seq: ([p for p in seq if p[0] >= n - LOOK] if len([p for p in seq if p[0] >= n - LOOK]) >= 2 else seq[-2:])
+    highs, lows = recent(allh), recent(alll)
     ma200 = float(c[-200:].mean()) if n >= 200 else None
     out = {"highs": highs, "lows": lows, "last": float(c[-1]), "ma200": ma200,
            "gap200": (c[-1] / ma200 - 1) * 100 if ma200 else None, "cup": find_cup_handle(c), "swing": pct}
@@ -151,8 +151,21 @@ def dashed(dr, p, q, fill, width=2, dash=9, gap=6):
         t += dash + gap
 
 
-def price(v):
-    return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:,.1f}"
+def price(v, more=False, man=None):
+    man = abs(v) >= 100000 if man is None else man
+    if man:                                     # 한국 주식처럼 큰 숫자는 '만' 단위로 줄인다
+        return f"{v / 10000:,.{2 if more else 1}f}만"
+    if abs(v) >= 1000:
+        return f"{v:,.{1 if more else 0}f}"
+    return f"{v:,.{2 if more else 1}f}"
+
+
+def flow_text(p, q):
+    man = max(abs(p), abs(q)) >= 100000         # 둘 중 하나라도 크면 둘 다 '만' 단위로 맞춘다
+    a, b = price(p, False, man), price(q, False, man)
+    if a == b:                                  # 반올림해서 같아 보이면 한 자리 더 보여준다
+        a, b = price(p, True, man), price(q, True, man)
+    return a, b
 
 
 def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반전 시그널 / 컵앤핸들"):
@@ -163,15 +176,15 @@ def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반
     f_title, f_sub, f_head, f_name = F(40, True), F(20), F(20, True), F(25, True)
     f_num, f_small, f_pill, f_big, f_tiny = F(22), F(18), F(18, True), F(24, True), F(16)
     W, M, HEAD_H, RH = 1640, 28, 52, 132
-    cols = [("종목", 190), ("차트 모양", 290), ("고점 흐름", 170), ("저점 흐름", 170), ("200일선", 140), ("책 기준 해석", 270), ("최근 1년 차트", 0)]
+    cols = [("종목", 190), ("차트 모양", 280), ("고점 흐름", 190), ("저점 흐름", 190), ("200일선", 120), ("책 기준 해석", 270), ("최근 1년 차트", 0)]
     cols[-1] = (cols[-1][0], W - 2 * M - sum(c[1] for c in cols[:-1]))
     widths = [c[1] for c in cols]
-    notes = ["M자 = 고점 다음 고점이 낮아짐(동시에 저점도) → 힘이 부족, 매도 준비   /   W자 = 저점 다음 저점이 높아짐(동시에 고점도) → 힘이 생김, 매수 준비",
+    notes = ["M자 = 고점 다음 고점이 낮아짐(동시에 저점도) = 힘이 부족, 매도 준비   /   W자 = 저점 다음 저점이 높아짐(동시에 고점도) = 힘이 생김, 매수 준비",
              "반전 시그널 = 낮아지던 고점·저점이 어느 순간부터 높아지기 시작한 곳(분위기가 바뀌는 변곡점). 반대 방향이면 ▼ 로 표시",
              "컵앤핸들 = W자로 올라온 뒤 잠깐 쉬는 손잡이. 핸들 고점(주황 점선)을 넘어서기 시작하는 구간을 매수 포인트로 봄",
-             "200일선: 주가가 200일선 위로 올라오면 상승 전환 확인, 아래로 내려가면 추가 매수 주의. 이격도·RSI 점검표와 함께 보면 정확도↑",
+             "200일선: 주가가 200일선 위로 올라오면 상승 전환 확인, 아래로 내려가면 추가 매수 주의. 이격도·RSI 점검표와 함께 보면 정확도가 높아짐",
              "차트: 검은 선 주가 · 파란 선 200일선 · 초록 점 고점 · 분홍 점 저점 · 점선은 최근 두 고점끼리, 두 저점끼리 이은 선(빨강 낮아짐 / 초록 높아짐)",
-             "고점·저점은 종목의 평소 흔들림에 맞춰 5~12% 이상 움직였다 꺾인 지점만 셉니다. 코드가 찾은 것은 신호가 아니라 '직접 차트로 확인해 볼 후보'입니다."]
+             "고점·저점은 종목의 평소 흔들림에 맞춰 4~12% 이상 움직였다 꺾인 지점만 셉니다. 코드가 찾은 것은 신호가 아니라 '직접 차트로 확인해 볼 후보'입니다."]
     H = 130 + HEAD_H + RH * len(rows) + 30 + len(notes) * 29 + 24
     img = Image.new("RGB", (W, H), "#fbf7ee")
     dr = ImageDraw.Draw(img)
@@ -213,8 +226,11 @@ def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반
             if len(seq) >= 2:
                 p, q = seq[-2][1], seq[-1][1]
                 col = UP if q > p else DN
-                t = f"{price(p)} → {price(q)}"
-                cen(x, wd, y - 14, RH, t, f_num if dr.textlength(t, font=f_num) < wd - 8 else f_tiny, "#1a1a1a")
+                t = "{} → {}".format(*flow_text(p, q))
+                fnt = next((f for f in (f_num, F(20)) if dr.textlength(t, font=f) < wd - 6), None)
+                if fnt is None:                 # 작은 글씨에서는 화살표가 깨져 보여서 '>' 로 바꾼다
+                    t, fnt = t.replace("→", ">"), F(18)
+                cen(x, wd, y - 14, RH, t, fnt, "#1a1a1a")
                 cen(x, wd, y + 18, RH, ("▲ 높아짐" if q > p else "▼ 낮아짐") + (" (진행 중)" if seq[-1][2] else ""), f_small, col)
             else:
                 cen(x, wd, y, RH, "—", f_num, "#999999")
@@ -230,9 +246,9 @@ def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반
         # 책 기준 해석
         extra = ""
         if a["state"] in ("REV_UP", "W") and g is not None:
-            extra = "200일선 위 → 상승 전환 확인" if g >= 0 else "200일선 회복은 아직"
+            extra = "200일선 위 · 상승 전환 확인" if g >= 0 else "200일선 회복은 아직"
         if a["state"] in ("REV_DOWN", "M", "M_EARLY") and g is not None:
-            extra = "200일선 아래 → 추가 매수 주의" if g < 0 else "200일선 이탈 여부 확인"
+            extra = "200일선 아래 · 추가 매수 주의" if g < 0 else "200일선 이탈 여부 확인"
         if cup:
             big, sub = ("매수 포인트 근접" if not cup["broke"] else "매수 포인트"), f"핸들 고점 {price(cup['rim'])} " + ("돌파 대기" if not cup["broke"] else "돌파")
         col = UP if big.startswith("매수") else DN if big in ("매도 준비", "주의") else "#555555"
