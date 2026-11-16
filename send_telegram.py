@@ -836,6 +836,12 @@ def main():
             if si.get("image") and os.path.exists(si["image"]):
                 time.sleep(1.5)
                 send_photo(token, chat_id, si["image"], si.get("caption", ""))
+    pt = load("patterns.json")  # 토요일: 차트 모양 점검표(M자·W자·반전·컵앤핸들) 그림들
+    if pt and str(pt.get("generated_at", ""))[:10] == today:
+        for pi in pt.get("images") or []:
+            if pi.get("image") and os.path.exists(pi["image"]):
+                time.sleep(1.5)
+                send_photo(token, chat_id, pi["image"], pi.get("caption", ""))
     br = load("breadth.json")  # 화·목: 시장 체력(50일·200일선 위 종목 비율) 그림 — 점검표 다음
     if br and str(br.get("generated_at", ""))[:10] == today and br.get("image") and os.path.exists(br["image"]):
         time.sleep(1.5)
