@@ -177,7 +177,7 @@ def note_of(row):
     elif row["buy_rsi"]:
         notes.append("★RSI 적극 매수(<30)")
     if row["deep"]:
-        notes.append("200일선 -15%↓ 과냉")
+        notes.append("200일선 -15% 아래 · 과냉")
     if row["total"] >= 5:
         notes.append("종합 5 · 현금 필요 시 먼저 매도")
     if row["partial"]:
@@ -197,8 +197,8 @@ MEMO_200W = ["200주선 메모 (초장기선 · 침체 쇼크 최후 방어선)"
              "• 점수는 매기지 않고 선과의 거리(%)만 봅니다",
              "• 고점 대비 20% 넘게 하락하는 경우가 많고, 매수로 생각하면 좋은 선",
              "• 노후대비·연금계좌 등 장기적으로 모아갈 수 있는 선",
-             "• 확인 방법: finviz.com 종목 페이지 → 차트에서 Daily 대신 Weekly 선택 → SMA 200 (주봉 200개 평균)",
-             "• 50일·200일 이격도와 RSI: Screener → 티커 입력 → Technical 탭 (SMA50 · SMA200 · RSI)"]
+             "• 확인 방법: finviz.com 종목 페이지 > 차트에서 Daily 대신 Weekly 선택 > SMA 200 (주봉 200개 평균)",
+             "• 50일·200일 이격도와 RSI: Screener > 티커 입력 > Technical 탭 (SMA50 · SMA200 · RSI)"]
 
 
 def wrap(dr, text, font, maxw):

@@ -47,8 +47,17 @@ def fetch_closes(sym, rng="2y", interval="1d"):
     r.raise_for_status()
     res = r.json()["chart"]["result"][0]
     off = res.get("meta", {}).get("gmtoffset", 0)
+    q = res["indicators"]["quote"][0]
+    closes = list(q["close"])
+    opens = list(q.get("open") or [None] * len(closes))
+    if sym.upper().endswith("-USD"):
+        # 코인은 24시간 거래라 '다음 날 시가 = 전날 종가'다. Yahoo 가 막 끝난 날의 종가를 잠시 비워 둘 때가 있어서
+        # (UTC 새벽 시간대) 그 칸은 다음 막대의 시가로 채운다. 안 채우면 기준 날짜가 하루 밀린다.
+        for i in range(len(closes) - 1):
+            if closes[i] is None and opens[i + 1] is not None:
+                closes[i] = opens[i + 1]
     bars = []
-    for t, c in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]):
+    for t, c in zip(res["timestamp"], closes):
         if c is not None:
             bars.append((dt.datetime.fromtimestamp(t + off, dt.timezone.utc).strftime("%Y-%m-%d"), float(c)))
     if not bars:

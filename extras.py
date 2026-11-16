@@ -277,7 +277,7 @@ TITLE_KO = [
     ("Federal Funds Rate", "FOMC 금리 결정"), ("FOMC Statement", "FOMC 성명"),
     ("FOMC Press Conference", "FOMC 기자회견"), ("FOMC Meeting Minutes", "FOMC 의사록"),
     ("Advance GDP", "GDP(속보)"), ("Prelim GDP", "GDP(잠정)"), ("Final GDP", "GDP(확정)"), ("GDP", "GDP"),
-    ("Retail Sales", "소매판매"), ("ISM Manufacturing", "ISM 제조업 PMI"), ("ISM Services", "ISM 서비스업 PMI"),
+    ("Core Retail Sales", "근원 소매판매(자동차 제외)"), ("Retail Sales", "소매판매"), ("ISM Manufacturing", "ISM 제조업 PMI"), ("ISM Services", "ISM 서비스업 PMI"),
     ("ADP", "ADP 고용"), ("Consumer Confidence", "소비자신뢰지수"),
     ("Consumer Sentiment", "미시간대 소비자심리"), ("Fed Chair", "연준 의장 발언"),
     ("Powell", "파월 의장 발언"), ("FOMC Member", "FOMC 위원 발언"),

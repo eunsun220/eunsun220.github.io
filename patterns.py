@@ -19,6 +19,7 @@ PER_IMG = 9       # 그림 한 장에 넣는 종목 수 (텔레그램이 큰 그
 SWING_LO, SWING_HI = 0.04, 0.12   # 고점·저점으로 치는 최소 움직임: 종목의 흔들림에 따라 4~12% 사이에서 정한다
 LOOK = 400        # 이 기간(거래일) 안의 고점·저점으로 모양을 판단한다 (부족하면 더 예전 것도 쓴다)
 SHOW = 250        # 그림에 보여주는 기간(약 1년)
+FLAT = 0.005      # 두 고점(저점)의 차이가 0.5% 안이면 '비슷'으로 본다
 
 
 def swing_of(c):
@@ -97,9 +98,9 @@ def analyze(closes, pct=None):
            "gap200": (c[-1] / ma200 - 1) * 100 if ma200 else None, "cup": find_cup_handle(c), "swing": pct}
     hh = lh = hl = ll = None
     if len(highs) >= 2:
-        hh, lh = highs[-1][1] > highs[-2][1], highs[-1][1] < highs[-2][1]
+        hh, lh = highs[-1][1] > highs[-2][1] * (1 + FLAT), highs[-1][1] < highs[-2][1] * (1 - FLAT)
     if len(lows) >= 2:
-        hl, ll = lows[-1][1] > lows[-2][1], lows[-1][1] < lows[-2][1]
+        hl, ll = lows[-1][1] > lows[-2][1] * (1 + FLAT), lows[-1][1] < lows[-2][1] * (1 - FLAT)
     last_conf = piv[-1][1] if piv else None
     state = "none"
     if hh and hl:
@@ -122,6 +123,10 @@ def analyze(closes, pct=None):
         state = "M_EARLY"
     elif hl and last_conf == "L":
         state = "W_EARLY"
+    elif hh and ll is False and hl is False:      # 고점은 높아졌는데 저점은 비슷
+        state = "W_FLAT"
+    elif ll and hh is False and lh is False:      # 저점은 낮아졌는데 고점은 비슷
+        state = "M_FLAT"
     elif hh is not None and hl is not None:
         state = "MIXED"
     out["state"] = state
@@ -135,6 +140,8 @@ LABEL = {  # 상태: (알약 글자, 배경색, 글자색, 해석 큰 글자, �
     "REV_DOWN": ("▼ 반전 시그널 (상승→하락)", "#b3261e", "white", "매도 준비", "높아지던 고점·저점이 낮아지기 시작"),
     "M":        ("M자 · 하락 추세", "#e53935", "white", "매도 준비", "고점·저점이 함께 낮아지는 중"),
     "M_EARLY":  ("M자 초기 (오른쪽 어깨 처짐)", "#f28c28", "white", "주의", "전고점 못 넘음 · 저점도 낮아지는지 확인"),
+    "W_FLAT":   ("W자 초기 (고점 높아짐·저점 비슷)", "#cfeab8", "#222222", "관찰", "저점도 높아지는지 확인"),
+    "M_FLAT":   ("M자 초기 (저점 낮아짐·고점 비슷)", "#f28c28", "white", "주의", "고점도 낮아지는지 확인"),
     "MIXED":    ("뚜렷한 모양 없음", "#d9d4c7", "#333333", "관망", "고점·저점 방향이 엇갈림"),
     "none":     ("판단 보류", "#d9d4c7", "#333333", "관망", "꺾임점이 부족함"),
 }
@@ -227,11 +234,15 @@ def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반
                 p, q = seq[-2][1], seq[-1][1]
                 col = UP if q > p else DN
                 t = "{} → {}".format(*flow_text(p, q))
-                fnt = next((f for f in (f_num, F(20)) if dr.textlength(t, font=f) < wd - 6), None)
-                if fnt is None:                 # 작은 글씨에서는 화살표가 깨져 보여서 '>' 로 바꾼다
-                    t, fnt = t.replace("→", ">"), F(18)
+                fnt = f_num
+                if dr.textlength(t, font=f_num) >= wd - 6:   # 작은 글씨에서는 화살표가 깨져 보여서 '>' 로 바꾼다
+                    t = t.replace("→", ">")
+                    fnt = next((f for f in (F(20), F(18)) if dr.textlength(t, font=f) < wd - 6), F(16))
                 cen(x, wd, y - 14, RH, t, fnt, "#1a1a1a")
-                cen(x, wd, y + 18, RH, ("▲ 높아짐" if q > p else "▼ 낮아짐") + (" (진행 중)" if seq[-1][2] else ""), f_small, col)
+                if abs(q - p) <= abs(p) * FLAT:
+                    cen(x, wd, y + 18, RH, "≈ 비슷", f_small, "#555555")
+                else:
+                    cen(x, wd, y + 18, RH, ("▲ 높아짐" if q > p else "▼ 낮아짐") + (" (진행 중)" if seq[-1][2] else ""), f_small, col)
             else:
                 cen(x, wd, y, RH, "—", f_num, "#999999")
             x += wd
@@ -247,7 +258,7 @@ def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반
         extra = ""
         if a["state"] in ("REV_UP", "W") and g is not None:
             extra = "200일선 위 · 상승 전환 확인" if g >= 0 else "200일선 회복은 아직"
-        if a["state"] in ("REV_DOWN", "M", "M_EARLY") and g is not None:
+        if a["state"] in ("REV_DOWN", "M", "M_EARLY", "M_FLAT") and g is not None:
             extra = "200일선 아래 · 추가 매수 주의" if g < 0 else "200일선 이탈 여부 확인"
         if cup:
             big, sub = ("매수 포인트 근접" if not cup["broke"] else "매수 포인트"), f"핸들 고점 {price(cup['rim'])} " + ("돌파 대기" if not cup["broke"] else "돌파")
@@ -264,10 +275,13 @@ def render(rows, path, asof, title="차트 모양 점검표 · M자 / W자 / 반
         seg = c[s0:]
         ma = np.array([c[max(0, i - 199): i + 1].mean() if i >= 199 else np.nan for i in range(s0, n)])
         cx0, cx1, cy0, cy1 = x + 12, x + widths[6] - 12, y + 10, y + RH - 10
-        lo = min(seg.min(), np.nanmin(ma) if not np.all(np.isnan(ma)) else seg.min())
-        hi = max(seg.max(), np.nanmax(ma) if not np.all(np.isnan(ma)) else seg.max())
+        lo, hi = seg.min(), seg.max()
+        if not np.all(np.isnan(ma)):               # 200일선이 주가와 너무 멀면 주가가 납작해지므로, 주가 범위의 40%까지만 넓힌다
+            span = hi - lo
+            lo, hi = max(min(lo, np.nanmin(ma)), lo - span * 0.4), min(max(hi, np.nanmax(ma)), hi + span * 0.4)
         pad = (hi - lo) * 0.08
         lo, hi = lo - pad, hi + pad
+        ma = np.clip(ma, lo, hi)                    # 범위를 벗어난 200일선은 테두리에 붙여 그린다
         px = lambda k: cx0 + (cx1 - cx0) * (k - s0) / max(len(seg) - 1, 1)
         py = lambda v: cy1 - (cy1 - cy0) * (v - lo) / (hi - lo)
         dr.rectangle([cx0, cy0, cx1, cy1], fill="#fdfcf8", outline="#e0d9c6")
@@ -316,7 +330,7 @@ def demo():
     return [{"name": k, "closes": v, "res": analyze(v, 0.08)} for k, v in S.items()]
 
 
-TAGS = [("REV_UP", "★ 반전 시그널(하락→상승)"), ("REV_DOWN", "▼ 반전 시그널(상승→하락)"), ("M_EARLY", "M자 초기"), ("W_EARLY", "W자 초기")]
+TAGS = [("REV_UP", "★ 반전 시그널(하락→상승)"), ("REV_DOWN", "▼ 반전 시그널(상승→하락)"), ("M_EARLY", "M자 초기"), ("M_FLAT", "M자 초기"), ("W_EARLY", "W자 초기"), ("W_FLAT", "W자 초기")]
 
 
 def caption_of(title, rows, basis):
