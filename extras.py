@@ -737,6 +737,8 @@ def manual_events(now, econ_titles, econ_ymds=()):
             continue  # 같은 날 경제 캘린더에 지표가 이미 있으면 중복 방지 (없으면 직접 적어 둔 지표 일정을 보여준다)
         if not title or not (now.date() <= d.date() <= (now + dt.timedelta(days=MANUAL_HORIZON_DAYS)).date()):
             continue
+        if "베이지북" in title and any("베이지북" in t or "Beige" in t for t in econ_titles):
+            continue  # 경제 캘린더에 이미 있으면 중복 방지
         if "FOMC" in title and any("FOMC" in t for t in econ_titles):
             continue  # 경제 캘린더에 이미 있으면 중복 방지
         out.append({"ymd": m["date"], "time": "", "title": title, "kind": m.get("kind") or "이벤트",
