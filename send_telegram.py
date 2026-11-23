@@ -401,6 +401,22 @@ def reminder_block(extras):
     return "\n".join(["<b>[매달 1일 다시 보는 메모]</b>"] + [f"{i}. {esc(t)}" for i, t in enumerate(items, 1)])
 
 
+def saju_block(now):
+    """매달 1일·15일: saju.json 에 적어 둔 그 달의 사주 메모 (FORCE_SECTIONS 에 saju 를 적으면 아무 날이나 시험)"""
+    forced = "saju" in os.environ.get("FORCE_SECTIONS", "")
+    if now.day not in (1, 15) and not forced:
+        return None
+    m = (load("saju.json") or {}).get("months", {}).get(f"{now:%Y-%m}")
+    if not m:
+        return None
+    head = "이번 달 사주 메모" if now.day == 1 else "보름 점검 · 이번 달 사주 메모"
+    out = [f"<b>[🔮 {head} · {now.month}월 {esc(m[0])}]</b>", esc(m[1])]
+    yr = (load("saju.json") or {}).get("years", {}).get(str(now.year))
+    if yr and (now.day == 1 or forced):
+        out.append(f"\n<b>{now.year}년 {esc(yr['name'])}</b>\n{esc(yr['text'])}")
+    return "\n".join(out)
+
+
 def weekly_block(weekly):
     if not weekly or not weekly.get("groups"):
         return None
@@ -668,7 +684,7 @@ def build_blocks(data, extras, weekly=None, ma=None, contrarian=None, watch=None
     if nb:
         blocks.append(nb[-1])
     for b in (None if cal_ok else today_block(extras), None if cal_ok else week_block(extras), weekly_block(weekly), watch_block(watch), ma_block(ma), *contrarian_blocks(contrarian, market_date(rows) if big_move(rows, now) else ""), cover_block(extras),
-              month_block(extras), reminder_block(extras)):
+              month_block(extras), reminder_block(extras), saju_block(now)):
         if b:
             blocks.append(b)
 
